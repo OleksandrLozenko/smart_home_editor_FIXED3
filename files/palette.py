@@ -41,28 +41,33 @@ class PreviewTile(QWidget):
         self._press_pos: Optional[QPoint] = None
         self._drag_from_icon: bool = False      # перетаскивание только если клик по иконке
         self._icon_rect: QRect = QRect()
+        self.setObjectName("PreviewTile")
+        self.setProperty("class", "PreviewTile")  # для QSS селектора .PreviewTile
 
     def sizeHint(self) -> QSize:
-        # Высота плитки = верхний отступ + высота иконки + место под текст + нижний отступ
         iw, ih = self._scaled_size()
         top_pad = 8
         text_pad = 22 if self.meta.get("name") else 10
         bottom_pad = 8
-
-        # Ширина — не меньше ширины иконки + поля, и не меньше прежней базовой
-        base_w = int(max(PREVIEW_MAX_W, 120) + 16)
-        w = max(int(iw) + 16, base_w)
+        # ширина = текущая ширина тайла (получаем из layout) либо базовая
+        w = max(int(iw) + 16, 160)
         h = top_pad + int(ih) + text_pad + bottom_pad
         return QSize(w, h)
 
-
     def _scaled_size(self) -> Tuple[float, float]:
-        # одинаковый квадрат (и хитбокс) для device и furniture
+        # доступная ширина с учётом внутренних отступов
+        avail = max(80, self.width() - 24)
         w, h = float(self.meta.get("w", 100)), float(self.meta.get("h", 100))
-        if self.meta.get("kind") in ("device", "furniture"):
-            return DEVICE_PREVIEW_SIZE, DEVICE_PREVIEW_SIZE
-        k = min(PREVIEW_MAX_W / max(1.0, w), PREVIEW_MAX_H / max(1.0, h))
-        return w * k, h * k
+        kind = self.meta.get("kind")
+        if kind == "room":
+            # масштабируем по ширине дока, но ограничиваем разумно
+            max_w = min(avail, 360.0)
+            k = min(max_w / max(1.0, w), PREVIEW_MAX_H / max(1.0, h))
+            return w * k, h * k
+        # device/furniture — небольшой квадрат, растущий, но с потолком
+        base = min( max(64.0, avail * 0.45), 120.0)
+        return base, base
+
 
     def _layout_icon_rect(self) -> QRect:
         iw, ih = self._scaled_size()
@@ -149,6 +154,7 @@ class PreviewTile(QWidget):
 
     def resizeEvent(self, ev):
         self._layout_icon_rect()
+        self.updateGeometry() 
         super().resizeEvent(ev)
 
 class PalettePanel(QWidget):
@@ -158,38 +164,68 @@ class PalettePanel(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        root = QHBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
-        icon_bar = QWidget(self); icon_bar.setFixedWidth(72)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Левая колонка с категориями
+        icon_bar = QWidget(self)
+        icon_bar.setFixedWidth(72)
         icon_bar.setStyleSheet("background:#f0f2f5; border-right:1px solid #e5e7eb;")
-        vb = QVBoxLayout(icon_bar); vb.setContentsMargins(6, 6, 6, 6); vb.setSpacing(8)
+        vb = QVBoxLayout(icon_bar)
+        vb.setContentsMargins(6, 6, 6, 6)
+        vb.setSpacing(8)
 
         self.btn_rooms = QToolButton(icon_bar)
         self.btn_devices = QToolButton(icon_bar)
         self.btn_furniture = QToolButton(icon_bar)
         for b in (self.btn_rooms, self.btn_devices, self.btn_furniture):
-            b.setAutoExclusive(True); b.setCheckable(True)
-            b.setIconSize(QSize(44, 44)); b.setFixedSize(56, 56); vb.addWidget(b)
+            b.setProperty("class", "category")
+            b.setAutoExclusive(True)
+            b.setCheckable(True)
+            b.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            b.setIconSize(QSize(28, 28))
+            b.setFixedSize(44, 44)
+            vb.addWidget(b)
         vb.addStretch(1)
         root.addWidget(icon_bar)
 
-        self.btn_rooms.setIcon(make_category_icon("rooms", 44)); self.btn_rooms.setToolTip("Комнаты")
-        self.btn_devices.setIcon(make_category_icon("devices", 44)); self.btn_devices.setToolTip("Приборы")
-        self.btn_furniture.setIcon(make_category_icon("furniture", 44)); self.btn_furniture.setToolTip("Мебель")
+        from .utils import CATEGORY_ICON_ROOMS, CATEGORY_ICON_DEVICES, CATEGORY_ICON_FURNITURE, load_svg_icon
+        def _cat(kind: str, size: int = 28):
+            path = CATEGORY_ICON_ROOMS if kind == "rooms" else (CATEGORY_ICON_DEVICES if kind == "devices" else CATEGORY_ICON_FURNITURE)
+            return load_svg_icon(path, size)
 
-        self.scroll = QScrollArea(self); self.scroll.setWidgetResizable(True)
+        self.btn_rooms.setIcon(_cat("rooms", 28) or self.btn_rooms.icon())
+        self.btn_rooms.setToolTip("Комнаты")
+        self.btn_devices.setIcon(_cat("devices", 28) or self.btn_devices.icon())
+        self.btn_devices.setToolTip("Приборы")
+        self.btn_furniture.setIcon(_cat("furniture", 28) or self.btn_furniture.icon())
+        self.btn_furniture.setToolTip("Мебель")
+
+        # Правая часть — скролл и контент
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea{background:#ffffff;}")
         root.addWidget(self.scroll, 1)
 
-        self.content = QWidget(); self.scroll.setWidget(self.content)
-        self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(8, 8, 8, 8); self.content_layout.setSpacing(8)
+        self.content = QWidget()                        # ← создаём content
+        self.content.setObjectName("PaletteContent")    # ← теперь можно задавать objectName
+        self.scroll.setWidget(self.content)
 
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
+        self.content_layout.setSpacing(8)
+
+        # Сигналы переключения
         self.btn_rooms.clicked.connect(lambda: self._switch("rooms"))
         self.btn_devices.clicked.connect(lambda: self._switch("devices"))
         self.btn_furniture.clicked.connect(lambda: self._switch("furniture"))
 
+        # Стартовая вкладка
         self.btn_rooms.setChecked(True)
+        self._current = "rooms"
         self._populate_rooms()
+
 
     def _clear_content(self):
         while self.content_layout.count():
@@ -246,3 +282,12 @@ class PalettePanel(QWidget):
                 grid.addWidget(PreviewTile(meta), i // 2, i % 2)
             self.content_layout.addWidget(grid_host)
             self.content_layout.addStretch(1)
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # перерисовать плитки, чтобы sizeHint учитывал новую ширину
+        for i in range(self.content_layout.count()):
+            w = self.content_layout.itemAt(i).widget()
+            if w and hasattr(w, "updateGeometry"):
+                w.updateGeometry()
+        self.content.updateGeometry()
+

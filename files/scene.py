@@ -1,10 +1,14 @@
 from __future__ import annotations
 import json, math
 from typing import Optional, Dict, Callable
+
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
-from PySide6.QtGui import QPainter, QPen, QColor
-from PySide6.QtWidgets import (QGraphicsScene, QGraphicsView, QGraphicsProxyWidget, QGraphicsItem,
-                               QWidget, QHBoxLayout, QDoubleSpinBox, QLabel)
+from PySide6.QtGui import QPainter, QPen, QColor, QWheelEvent
+from PySide6.QtWidgets import (
+    QGraphicsScene, QGraphicsView, QGraphicsProxyWidget, QGraphicsItem,
+    QWidget, QHBoxLayout, QDoubleSpinBox, QLabel, QApplication
+)
+
 from .models import Mode, Layer, ItemProps
 from .utils import (BG_COLOR, GRID_STEP, MAJOR_EVERY, GRID_MAJOR, GRID_MINOR,
                     SCENE_BORDER, SCENE_BORDER_W, snap, PX_GRID, _scene_rect_of_item, _rects_overlap_strict,
@@ -328,6 +332,9 @@ class PlanScene(QGraphicsScene):
                 it.setFlag(QGraphicsItem.ItemIsMovable, editable)
 
 class PlanView(QGraphicsView):
+    # правильное объявление сигнала — на уровне класса
+    scaleChanged = Signal(float)  # текущее m11()
+
     def __init__(self, scene: PlanScene):
         super().__init__(scene)
         self.setRenderHint(QPainter.Antialiasing, True)
@@ -337,6 +344,8 @@ class PlanView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self._space_down = False
         self.setBackgroundBrush(Qt.NoBrush)
+
+        # HUD слоёв
         self.hud = LayersHUD(self)
         self.hud.reposition()
         self.hud.adjustSize()
@@ -344,26 +353,37 @@ class PlanView(QGraphicsView):
         self.hud.raise_()
         self.hud.reposition()
 
+        # один раз сообщим текущий масштаб (1.0)
+        self.scaleChanged.emit(self.transform().m11())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "hud") and self.hud:
             self.hud.reposition()
 
-    def wheelEvent(self, event):
-        angle = event.angleDelta().y()
-        factor = 1.15 if angle > 0 else 1.0 / 1.15
-        self.scale(factor, factor); event.accept()
+    def wheelEvent(self, event: QWheelEvent):
+        if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            angle = event.angleDelta().y()
+            factor = 1.15 if angle > 0 else 1.0 / 1.15
+            self.scale(factor, factor)
+            self.scaleChanged.emit(self.transform().m11())
+            event.accept()
+            return
+        super().wheelEvent(event)
+
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space and not self._space_down:
             self._space_down = True
             self.setDragMode(QGraphicsView.ScrollHandDrag)
-            event.accept(); return
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key_Space and self._space_down:
             self._space_down = False
             self.setDragMode(QGraphicsView.RubberBandDrag)
-            event.accept(); return
+            event.accept()
+            return
         super().keyReleaseEvent(event)

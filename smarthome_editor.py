@@ -4,7 +4,11 @@ from __future__ import annotations
 import sys, json
 from PySide6.QtCore import Qt, QSizeF
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QApplication, QMainWindow, QToolBar, QStatusBar, QFileDialog, QMessageBox, QDockWidget, QStyle
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QToolBar, QStatusBar, QFileDialog, QMessageBox,
+    QDockWidget, QStyle, QLabel, QWidget, QWidgetAction   # ← добавлено
+)
+
 from files import PlanScene, PlanView, UndoManager, Mode, PalettePanel, SCENE_W, SCENE_H, PropertyPanel, Layer
 
 class MainWindow(QMainWindow):
@@ -30,12 +34,27 @@ class MainWindow(QMainWindow):
         self.palette_dock = QDockWidget("Палитра", self)
         self.palette_dock.setWidget(self.palette)
         self.palette_dock.setMinimumWidth(260)
+        # Палитра
+        self.palette_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.palette_dock.setMinimumWidth(220)
+        self.palette_dock.setMaximumWidth(520)  # чтобы не раздувалась бесконечно
+
+        # Свойства
+        self.props_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.props_dock.setMinimumWidth(280)
+        self.props_dock.setMaximumWidth(560)
+
         self.addDockWidget(Qt.LeftDockWidgetArea, self.palette_dock)
 
         # 4) Тулбар/статус
         self.undo_manager = UndoManager(on_change=self._update_status)
         self._build_toolbar()
         self.setStatusBar(QStatusBar(self))
+
+        self.view.scaleChanged.connect(lambda s: self.statusBar().showMessage(
+            f"Режим: {'Просмотр' if self.scene.mode==Mode.VIEW else 'Редактирование'} | "
+            f"Слой: {self.scene.active_layer} | Масштаб: {int(s*100)}%"
+        ))
 
         # 5) Подписки: открывать «Свойства», когда что-то выделили
         def _show_props_if_hidden():
@@ -65,6 +84,14 @@ class MainWindow(QMainWindow):
         sel = [it for it in self.scene.selectedItems() if hasattr(it, "props")]
         item = sel[0] if sel else None
         self.props_panel.load_item(item)
+    
+    def _sep_label(self, tb: QToolBar, text: str):
+        lbl = QLabel(f"  {text}  ")
+        lbl.setStyleSheet("color:#667085; font-weight:600;")
+        wa = QWidgetAction(self)
+        wa.setDefaultWidget(lbl)
+        tb.addAction(wa)
+
 
     def _focus_item(self, item):
         # показать/прокрутить
@@ -81,58 +108,103 @@ class MainWindow(QMainWindow):
         self.palette_dock.setMinimumWidth(260)
 
     def _build_toolbar(self):
-        tb = QToolBar("Управление", self)
+        tb = QToolBar("Панель", self)
         tb.setMovable(False)
         tb.setIconSize(QSizeF(18, 18).toSize())
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        tb.setStyleSheet("QToolBar { background: #ffffff; border-bottom: 1px solid #e5e7eb; padding: 4px; }")
         self.addToolBar(Qt.TopToolBarArea, tb)
 
         style = self.style()
-        ico_view   = style.standardIcon(QStyle.SP_DesktopIcon)
-        ico_grid   = style.standardIcon(QStyle.SP_DialogResetButton)
-        ico_save   = style.standardIcon(QStyle.SP_DialogSaveButton)
-        ico_open   = style.standardIcon(QStyle.SP_DirOpenIcon)
-        ico_export = style.standardIcon(QStyle.SP_ArrowRight)
-        ico_undo   = style.standardIcon(QStyle.SP_ArrowBack)
-        ico_redo   = style.standardIcon(QStyle.SP_ArrowForward)
+        # аккуратный загрузчик svg с фолбэком на системную иконку
+        from files.utils import load_svg_icon
+        def ico(path: str | None, fallback: QStyle.StandardPixmap):
+            if path:
+                icon = load_svg_icon(path, 18)
+                if icon: 
+                    return icon
+            return style.standardIcon(fallback)
 
-        self.act_viewmode = QAction(ico_view, "Просмотр", self, checkable=True)
+        # --- ДЕЙСТВИЯ ---
+        self.act_viewmode = QAction(ico("assets/icons/view.svg", QStyle.SP_DesktopIcon),
+                                    "Просмотр", self, checkable=True)
         self.act_viewmode.toggled.connect(self._toggle_viewmode)
 
-        self.act_snap = QAction(ico_grid, "Сетка", self, checkable=True)
+        self.act_snap = QAction(ico("assets/icons/grid.svg", QStyle.SP_DialogResetButton),
+                                "Сетка", self, checkable=True)
         self.act_snap.setChecked(True)
         self.act_snap.toggled.connect(lambda on: setattr(self.scene, "snap_to_grid", on))
 
-        self.act_save = QAction(ico_save, "Сохранить", self)
-        self.act_save.setShortcut(QKeySequence("Ctrl+S"))
-        self.act_save.triggered.connect(self._export_json_dialog)
-
-        self.act_import = QAction(ico_open, "Импорт", self)
+        self.act_import = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
+                                "Импорт", self)
         self.act_import.setShortcut(QKeySequence("Ctrl+O"))
         self.act_import.triggered.connect(self._import_json_dialog)
 
-        self.act_export = QAction(ico_export, "Экспорт", self)
+        self.act_export = QAction(ico("assets/icons/export.svg", QStyle.SP_ArrowRight),
+                                "Экспорт", self)
         self.act_export.setShortcut(QKeySequence("Ctrl+E"))
         self.act_export.triggered.connect(self._export_json_dialog)
 
-        self.act_undo = QAction(ico_undo, "Отменить", self)
+        self.act_save = QAction(ico("assets/icons/save.svg", QStyle.SP_DialogSaveButton),
+                                "Сохранить", self)
+        self.act_save.setShortcut(QKeySequence("Ctrl+S"))
+        self.act_save.triggered.connect(self._export_json_dialog)
+
+        self.act_undo = QAction(ico("assets/icons/undo.svg", QStyle.SP_ArrowBack),
+                                "Откат", self)
         self.act_undo.setShortcut(QKeySequence("Ctrl+Z"))
         self.act_undo.triggered.connect(self._undo)
 
-        self.act_redo = QAction(ico_redo, "Повторить", self)
+        self.act_redo = QAction(ico("assets/icons/redo.svg", QStyle.SP_ArrowForward),
+                                "Обратно", self)
         self.act_redo.setShortcut(QKeySequence("Ctrl+Y"))
         self.act_redo.triggered.connect(self._redo)
 
-        tb.addAction(self.act_viewmode)
-        tb.addAction(self.act_snap)
-        tb.addSeparator()
+        self.act_settings = QAction(ico("assets/icons/settings.svg", QStyle.SP_FileDialogDetailedView),
+                                    "Настройки", self)
+        self.act_settings.triggered.connect(lambda: None)  # заглушка
+
+        # — Тогглеры доков. Иконки: если нет своих svg, берём системные.
+        self.act_toggle_props = QAction(
+            ico("assets/icons/props.svg", QStyle.SP_FileDialogInfoView),  # ← нет файла? возьмём стандартную
+            "Свойства", self, checkable=True
+        )
+        self.act_toggle_palette = QAction(
+            ico("assets/icons/palette.svg", QStyle.SP_DirIcon),           # ← нет файла? возьмём стандартную
+            "Палитра", self, checkable=True
+        )
+        def _sync_dock_actions():
+            self.act_toggle_props.setChecked(not self.props_dock.isHidden())
+            self.act_toggle_palette.setChecked(not self.palette_dock.isHidden())
+        _sync_dock_actions()
+        self.act_toggle_props.toggled.connect(lambda on: (self.props_dock.show() if on else self.props_dock.hide()))
+        self.act_toggle_palette.toggled.connect(lambda on: (self.palette_dock.show() if on else self.palette_dock.hide()))
+        self.props_dock.visibilityChanged.connect(lambda _: _sync_dock_actions())
+        self.palette_dock.visibilityChanged.connect(lambda _: _sync_dock_actions())
+
+        # --- Разметка на тулбаре ---
+        from PySide6.QtWidgets import QLabel, QWidgetAction
+        def _lbl(text: str):
+            lab = QLabel(f"  {text}  "); lab.setStyleSheet("color:#667085; font-weight:600;")
+            wa = QWidgetAction(self); wa.setDefaultWidget(lab); tb.addAction(wa)
+
+        _lbl("Проект")
         tb.addAction(self.act_save)
-        tb.addAction(self.act_import)
+        tb.addAction(self.act_import)   # ← Импорт на месте
         tb.addAction(self.act_export)
-        tb.addSeparator()
+
+        _lbl("Редактирование")
+        tb.addAction(self.act_snap)
+        tb.addAction(self.act_viewmode)
         tb.addAction(self.act_undo)
         tb.addAction(self.act_redo)
+
+        _lbl("Окна")
+        tb.addAction(self.act_toggle_props)
+        tb.addAction(self.act_toggle_palette)
+
+        tb.addSeparator()
+        tb.addAction(self.act_settings)
+
 
     def _import_json_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Импорт JSON", "", "JSON (*.json)")
@@ -191,6 +263,8 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    with open("smart_theme.qss", "r", encoding="utf-8") as f:
+        app.setStyleSheet(f.read())
     win = MainWindow()
     win.show()
     return app.exec()

@@ -36,6 +36,11 @@ class LayersHUD(QWidget):
         self.btn_devices.clicked.connect(lambda: self._set_layer(Layer.DEVICES))
         self.btn_furn.clicked.connect(lambda: self._set_layer(Layer.FURNITURE))
 
+        self.setObjectName("LayersHUD")
+        for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
+            b.setProperty("class", "layer")
+            b.setCheckable(True); b.setAutoExclusive(True)
+
         self.resize(self.sizeHint())
         self.setMinimumSize(self.sizeHint())
         self.show()

@@ -1,0 +1,44 @@
+/* --- Базовое --- */
+* { font-family: "Segoe UI", "Inter", sans-serif; font-size: 12px; }
+QMainWindow { background: #f7f7fb; }
+
+/* --- Toolbar --- */
+QToolBar { background:#fff; border-bottom:1px solid #e7e8ee; padding:4px 8px; }
+QToolBar QToolButton { padding:6px 8px; border-radius:10px; }
+QToolBar QToolButton:hover { background:#f2f4f7; }
+QToolBar QToolButton:checked { background:#e7f0ff; }
+
+/* --- Dock --- */
+QDockWidget { border:1px solid #e7e8ee; }
+QDockWidget::title { background:#fafbff; padding:4px 8px; border-bottom:1px solid #e7e8ee; }
+
+/* --- Скролл/палитра --- */
+QScrollArea { background:#fff; border:none; }
+QWidget#PaletteContent { background:#fff; }
+
+/* Кнопки категорий-пилюли */
+QToolButton.category {
+  background:transparent; border:1px solid transparent; border-radius:12px; padding:4px;
+}
+QToolButton.category:hover { background:#eef2ff; }
+QToolButton.category:checked { background:#dbe7ff; border-color:#a7c2ff; }
+
+/* Плитки палитры */
+.PreviewTile { border:1px solid #eaeaf0; border-radius:12px; background:#fafbff; }
+.PreviewTile:hover { border-color:#d0d7ff; background:#f4f7ff; }
+
+/* Списки */
+QListWidget {
+  background:#fff; border:1px solid #e7e8ee; border-radius:8px; padding:4px;
+}
+QListWidget::item { padding:6px 8px; }
+QListWidget::item:selected { background:#e7f0ff; color:#111; }
+
+/* Статус-бар */
+QStatusBar { background:#fff; border-top:1px solid #e7e8ee; }
+
+/* HUD слоёв (если есть QFrame#LayersHUD) */
+QFrame#LayersHUD { background:rgba(255,255,255,.95); border:1px solid #e7e8ee; border-radius:14px; }
+QToolButton.layer { border:none; padding:6px 10px; border-radius:12px; }
+QToolButton.layer:hover { background:#f2f4f7; }
+QToolButton.layer:checked { background:#dbe7ff; }
