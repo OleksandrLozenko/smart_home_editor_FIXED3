@@ -1,0 +1,369 @@
+from __future__ import annotations
+import json, math
+from typing import Optional, Dict, Callable
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtWidgets import (QGraphicsScene, QGraphicsView, QGraphicsProxyWidget, QGraphicsItem,
+                               QWidget, QHBoxLayout, QDoubleSpinBox, QLabel)
+from .models import Mode, Layer, ItemProps
+from .utils import (BG_COLOR, GRID_STEP, MAJOR_EVERY, GRID_MAJOR, GRID_MINOR,
+                    SCENE_BORDER, SCENE_BORDER_W, snap, PX_GRID, _scene_rect_of_item, _rects_overlap_strict,
+                    SCENE_W, SCENE_H, EPS, DEV_BORDER)
+from .state import SceneState
+from .factory import ItemFactory
+from .items import RoomItem, DeviceItem, PlanRectItem, FurnitureItem
+from .hud import LayersHUD
+
+# ---- SizeOverlay (как в монолитной версии) ----
+class SizeOverlay(QWidget):
+    sizeChanged = Signal(float, float)
+    def __init__(self, w: float, h: float, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        self.w = QDoubleSpinBox(); self.h = QDoubleSpinBox()
+        for s in (self.w, self.h):
+            s.setRange(1, 99999); s.setDecimals(0); s.setSingleStep(5); s.setSuffix(" px"); s.setFixedWidth(110)
+        self.w.setValue(w); self.h.setValue(h)
+        lay.addWidget(QLabel("W:")); lay.addWidget(self.w)
+        lay.addWidget(QLabel("H:")); lay.addWidget(self.h)
+        self.w.valueChanged.connect(self._emit); self.h.valueChanged.connect(self._emit)
+    def _emit(self, *_): self.sizeChanged.emit(self.w.value(), self.h.value())
+
+class PlanScene(QGraphicsScene):
+    def __init__(self, status_cb: Optional[Callable[[str], None]] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mode = Mode.EDIT
+        self.snap_to_grid = True
+        self.setItemIndexMethod(QGraphicsScene.NoIndex)
+        self.setSceneRect(0, 0, SCENE_W, SCENE_H)
+        self._size_proxy = None
+        self._overlay_owner = None
+        self._pre_snapshot: Optional[str] = None
+        self._status_cb = status_cb
+        self.state = SceneState(self.sceneRect())
+        self.factory = ItemFactory(self)
+        self.active_layer = Layer.ROOMS
+        self._drag_preview: Optional[PlanRectItem] = None
+        self._drag_meta: Optional[Dict] = None
+        self.selectionChanged.connect(self._on_selection_changed)
+
+
+    def _on_selection_changed(self):
+    # no-op: MainWindow сам слушает scene.selectionChanged и обновляет панель свойств
+        pass
+
+    def apply_layer_state(self):
+        self.clearSelection()
+        if self._overlay_owner and not self._owner_in_active_layer(self._overlay_owner):
+            self.hide_size_overlay(self._overlay_owner)
+
+        if self.active_layer == Layer.ROOMS:
+            for it in self.items():
+                if isinstance(it, RoomItem):
+                    it.set_view_mode("active")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                elif isinstance(it, (DeviceItem, FurnitureItem)):
+                    it.set_view_mode("dim")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        elif self.active_layer == Layer.DEVICES:
+            for it in self.items():
+                if isinstance(it, RoomItem):
+                    it.set_view_mode("dim_strong_border")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)   # ← разрешаем выделение
+                elif isinstance(it, DeviceItem):
+                    it.set_view_mode("active_bright")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                elif isinstance(it, FurnitureItem):
+                    it.set_view_mode("dim")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+
+        elif self.active_layer == Layer.FURNITURE:
+            for it in self.items():
+                if isinstance(it, RoomItem):
+                    it.set_view_mode("dim_strong_border")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)   # ← разрешаем выделение
+                elif isinstance(it, FurnitureItem):
+                    it.set_view_mode("active_bright")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                elif isinstance(it, DeviceItem):
+                    it.set_view_mode("dim")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+
+
+        if self._overlay_owner and not self._owner_in_active_layer(self._overlay_owner):
+            self.hide_size_overlay(self._overlay_owner)
+
+
+    def _make_preview(self, meta: Dict):
+        self._clear_preview()
+        kind = meta.get("kind", "device")
+        w = float(meta.get("w", 100)); h = float(meta.get("h", 50))
+        if kind == "room":
+            item = RoomItem(ItemProps(meta.get("name","Комната"), w, h, meta.get("desc",""), "room"), QRectF(0,0,w,h))
+        elif kind == "furniture":
+            item = FurnitureItem(ItemProps(meta.get("name","Мебель"), w, h, meta.get("desc",""), "furniture"), QRectF(0,0,w,h))
+        else:
+            item = DeviceItem(ItemProps(meta.get("name","Устройство"), w, h, meta.get("desc",""), "device"), QRectF(0,0,w,h))
+        self.addItem(item)
+        item.setOpacity(0.5); item.setZValue(10_000)
+        item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self._drag_preview = item; self._drag_meta = meta
+
+
+    def _clear_preview(self):
+        if self._drag_preview:
+            self.removeItem(self._drag_preview)
+            self._drag_preview = None
+            self._drag_meta = None
+
+    def _update_preview_pos(self, scene_pos: QPointF):
+        if not (self._drag_preview and self._drag_meta): return
+        kind = self._drag_meta.get("kind","device")
+        w = float(self._drag_meta.get("w",100)); h = float(self._drag_meta.get("h",50))
+        pos = QPointF(scene_pos)
+        if self.snap_to_grid:
+            pos = QPointF(snap(pos.x(), PX_GRID), snap(pos.y(), PX_GRID))
+
+        if kind == "room":
+            x = min(max(pos.x(), self.sceneRect().left()),  self.sceneRect().right() - w)
+            y = min(max(pos.y(), self.sceneRect().top()),   self.sceneRect().bottom() - h)
+            self._drag_preview.setParentItem(None)
+            self._drag_preview.setPos(QPointF(x, y))
+            self.nudge_room_to_touch(self._drag_preview)
+            bad = False
+            a = _scene_rect_of_item(self._drag_preview)
+            for it in self.items():
+                if isinstance(it, RoomItem) and it is not self._drag_preview:
+                    if _rects_overlap_strict(a, _scene_rect_of_item(it)):
+                        bad = True; break
+            pen = QPen(QColor(220, 30, 30), 2, Qt.DashLine if bad else Qt.SolidLine)
+            self._drag_preview.setPen(pen)
+        else:
+            room = self.room_at(scene_pos)
+            if not room:
+                self._drag_preview.setVisible(False); return
+            self._drag_preview.setVisible(True)
+            local = room.mapFromScene(pos)
+            lx = min(max(local.x(), 0), room.rect().width()  - w)
+            ly = min(max(local.y(), 0), room.rect().height() - h)
+            self._drag_preview.setParentItem(room)
+            self._drag_preview.setPos(QPointF(lx, ly))
+            self._drag_preview.setPen(QPen(DEV_BORDER, 1, Qt.DashLine))
+
+    def set_active_layer(self, layer: str):
+        if layer == self.active_layer: 
+            return
+        self.active_layer = layer
+        self.apply_layer_state()
+        # синхронизируем HUD (если он есть у view)
+        for v in self.views():
+            hud = getattr(v, "hud", None)
+            if hud:
+                hud.set_checked(layer)
+        from PySide6.QtWidgets import QApplication
+        mw = QApplication.activeWindow()
+        if hasattr(mw, "_update_status"):
+            mw._update_status()
+
+
+    def _owner_in_active_layer(self, owner: "PlanRectItem") -> bool:
+        return ((self.active_layer == Layer.ROOMS      and isinstance(owner, RoomItem)) or
+                (self.active_layer == Layer.DEVICES    and isinstance(owner, DeviceItem)) or
+                (self.active_layer == Layer.FURNITURE  and isinstance(owner, FurnitureItem)))
+
+    def nudge_room_to_touch(self, room: "RoomItem"):
+        for _ in range(12):
+            moved = False
+            a = _scene_rect_of_item(room).intersected(self.sceneRect())
+            for it in self.items():
+                if not isinstance(it, RoomItem) or it is room: continue
+                b = _scene_rect_of_item(it)
+                overlap_x = min(a.right(), b.right()) - max(a.left(), b.left())
+                overlap_y = min(a.bottom(), b.bottom()) - max(a.top(), b.top())
+                if overlap_x <= EPS or overlap_y <= EPS: continue
+                if overlap_x <= overlap_y:
+                    dx = (b.left() - a.right()) if a.center().x() < b.center().x() else (b.right() - a.left()); dy = 0.0
+                else:
+                    dx = 0.0; dy = (b.top() - a.bottom()) if a.center().y() < b.center().y() else (b.bottom() - a.top())
+                new_x = min(max(room.pos().x() + dx, self.sceneRect().left()), self.sceneRect().right() - room.rect().width())
+                new_y = min(max(room.pos().y() + dy, self.sceneRect().top()),  self.sceneRect().bottom() - room.rect().height())
+                if self.snap_to_grid:
+                    new_x = snap(new_x, PX_GRID); new_y = snap(new_y, PX_GRID)
+                if abs(new_x - room.pos().x()) > EPS or abs(new_y - room.pos().y()) > EPS:
+                    room.setPos(QPointF(new_x, new_y)); moved = True; a = _scene_rect_of_item(room)
+            if not moved: break
+
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        painter.fillRect(rect, BG_COLOR)
+        step = GRID_STEP
+        left = math.floor(rect.left() / step) * step
+        top  = math.floor(rect.top()  / step) * step
+        x = left; i = int(x // step)
+        while x < rect.right():
+            is_major = (i % MAJOR_EVERY == 0)
+            painter.setPen(QPen(GRID_MAJOR if is_major else GRID_MINOR, 1.5 if is_major else 1, Qt.SolidLine, Qt.SquareCap))
+            painter.drawLine(x, rect.top(), x, rect.bottom())
+            x += step; i += 1
+        y = top; j = int(y // step)
+        while y < rect.bottom():
+            is_major = (j % MAJOR_EVERY == 0)
+            painter.setPen(QPen(GRID_MAJOR if is_major else GRID_MINOR, 1.5 if is_major else 1, Qt.SolidLine, Qt.SquareCap))
+            painter.drawLine(rect.left(), y, rect.right(), y)
+            y += step; j += 1
+        painter.setPen(QPen(SCENE_BORDER, SCENE_BORDER_W)); painter.setBrush(Qt.NoBrush); painter.drawRect(self.sceneRect())
+
+    # ---- DnD ----
+    def dragEnterEvent(self, event):
+        if self.mode == Mode.EDIT and event.mimeData().hasFormat("application/x-smart"):
+            try:
+                meta = json.loads(bytes(event.mimeData().data("application/x-smart").data()).decode("utf-8"))
+            except Exception:
+                meta = {"name":"Объект","w":100,"h":50,"kind":"device"}
+            self._make_preview(meta); self._update_preview_pos(event.scenePos())
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self.mode == Mode.EDIT and event.mimeData().hasFormat("application/x-smart"):
+            self._update_preview_pos(event.scenePos()); event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._clear_preview(); event.accept()
+
+    def dropEvent(self, event):
+        if self.mode != Mode.EDIT or not event.mimeData().hasFormat("application/x-smart"):
+            event.ignore(); return
+        data = event.mimeData().data("application/x-smart").data()
+        try:
+            meta = json.loads(bytes(data).decode("utf-8"))
+        except Exception:
+            meta = {"name": "Объект", "w": 100, "h": 50, "kind": "device"}
+        created = self.factory.create_from_meta(meta, event.scenePos())
+        if created is None:
+            self._clear_preview(); event.ignore(); return
+        self._clear_preview()
+        self._push_snapshot("drop")
+        self.clearSelection()
+        self.apply_layer_state()
+        event.acceptProposedAction()
+
+    def room_at(self, scene_pos: QPointF) -> Optional[RoomItem]:
+        for it in self.items(scene_pos):
+            if isinstance(it, RoomItem): return it
+        return None
+
+    def show_size_overlay(self, owner):
+        return
+
+    def hide_size_overlay(self, owner=None):
+        return
+
+    def _apply_size(self, item: PlanRectItem, w: float, h: float):
+        self._stash_snapshot()
+        if item.set_size_px(w, h):
+            self._commit_snapshot("size")
+        else:
+            self._pre_snapshot = None
+        # Хелпер: список приборов в комнате
+    def devices_in_room(self, room) -> list:
+        out = []
+        if not isinstance(room, RoomItem):
+            return out
+        for ch in room.childItems():
+            if isinstance(ch, DeviceItem):
+                out.append(ch)
+        return out
+
+    # Хелпер: сфокусировать/прокрутить к элементу
+    def ensure_visible_item(self, item):
+        views = self.views()
+        if not views: return
+        view = views[0]
+        r = item.mapRectToScene(item.rect())
+        view.ensureVisible(r, 40, 40)
+
+    # ---- snapshots ----
+    def serialize(self) -> Dict:
+        return self.state.serialize(self)
+
+    def clear_all_items(self):
+        for it in list(self.items()):
+            if isinstance(it, (RoomItem, DeviceItem, QGraphicsProxyWidget)):
+                self.removeItem(it)
+
+    def deserialize(self, data: Dict):
+        self.state.deserialize(self, data)
+
+    def _stash_snapshot(self):
+        self._pre_snapshot = json.dumps(self.serialize())
+
+    def _commit_snapshot(self, _label="change"):
+        if self._pre_snapshot is not None:
+            self._push_snapshot(_label); self._pre_snapshot = None
+
+    def _push_snapshot(self, _label="change"):
+        if self._status_cb:
+            self._status_cb(f"Сохранено действие: { _label }")
+        from PySide6.QtWidgets import QApplication
+        mw = QApplication.activeWindow()
+        if hasattr(mw, "undo_manager"):
+            mw.undo_manager.push(json.dumps(self.serialize()))
+
+    def set_editable(self, editable: bool):
+        for it in self.items():
+            if isinstance(it, PlanRectItem):
+                it.setFlag(QGraphicsItem.ItemIsMovable, editable)
+
+class PlanView(QGraphicsView):
+    def __init__(self, scene: PlanScene):
+        super().__init__(scene)
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
+        self.setDragMode(QGraphicsView.RubberBandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self._space_down = False
+        self.setBackgroundBrush(Qt.NoBrush)
+        self.hud = LayersHUD(self)
+        self.hud.reposition()
+        self.hud.adjustSize()
+        self.hud.show()
+        self.hud.raise_()
+        self.hud.reposition()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "hud") and self.hud:
+            self.hud.reposition()
+
+    def wheelEvent(self, event):
+        angle = event.angleDelta().y()
+        factor = 1.15 if angle > 0 else 1.0 / 1.15
+        self.scale(factor, factor); event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space and not self._space_down:
+            self._space_down = True
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+            event.accept(); return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space and self._space_down:
+            self._space_down = False
+            self.setDragMode(QGraphicsView.RubberBandDrag)
+            event.accept(); return
+        super().keyReleaseEvent(event)
