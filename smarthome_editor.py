@@ -8,8 +8,15 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QStatusBar, QFileDialog, QMessageBox,
     QDockWidget, QStyle, QLabel, QWidget, QWidgetAction   # ← добавлено
 )
-
+import os
 from files import PlanScene, PlanView, UndoManager, Mode, PalettePanel, SCENE_W, SCENE_H, PropertyPanel, Layer
+
+def _ensure_ext(path: str, ext: str) -> str:
+    ext = ext.lower()
+    return path if path.lower().endswith(ext) else path + ext
+
+def _is_sh_or_json(path: str) -> bool:
+    return path.lower().endswith(".sh") or path.lower().endswith(".json")
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -121,7 +128,7 @@ class MainWindow(QMainWindow):
 
         # ----- действия -----
         self.act_viewmode = QAction(ico("assets/icons/view.svg", QStyle.SP_DesktopIcon),
-                                    "Просмотр", self, checkable=True)
+                            "Просмотр", self, checkable=True)
         self.act_viewmode.toggled.connect(self._toggle_viewmode)
 
         self.act_snap = QAction(ico("assets/icons/grid.svg", QStyle.SP_DialogResetButton),
@@ -129,32 +136,32 @@ class MainWindow(QMainWindow):
         self.act_snap.setChecked(True)
         self.act_snap.toggled.connect(lambda on: setattr(self.scene, "snap_to_grid", on))
 
+        # ОТКРЫТЬ/СОХРАНИТЬ ПРОЕКТ (.sh | .json)
         self.act_open = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
                                 "Открыть проект…", self)
         self.act_open.setShortcut(QKeySequence("Ctrl+O"))
-        self.act_open.triggered.connect(self._open_json_dialog)
+        self.act_open.triggered.connect(self._open_project_dialog)
 
+        self.act_save = QAction(ico("assets/icons/save.svg", QStyle.SP_DialogSaveButton),
+                                "Сохранить проект", self)
+        self.act_save.setShortcut(QKeySequence("Ctrl+S"))
+        self.act_save.triggered.connect(self._save_project_dialog)   # ← .sh
+
+        # ИМПОРТ/ЭКСПОРТ JSON (отдельно)
         self.act_import_into = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
-                                    "Импортировать в текущий…", self)
+                                    "Импортировать JSON в текущий…", self)
         self.act_import_into.triggered.connect(self._import_into_current_dialog)
 
         self.act_export = QAction(ico("assets/icons/export.svg", QStyle.SP_ArrowRight),
-                                "Экспорт…", self)
+                                "Экспорт JSON…", self)
         self.act_export.setShortcut(QKeySequence("Ctrl+E"))
         self.act_export.triggered.connect(self._export_json_dialog)
 
-        self.act_save = QAction(ico("assets/icons/save.svg", QStyle.SP_DialogSaveButton),
-                                "Сохранить", self)
-        self.act_save.setShortcut(QKeySequence("Ctrl+S"))
-        self.act_save.triggered.connect(self._export_json_dialog)
-
-        self.act_undo = QAction(ico("assets/icons/undo.svg", QStyle.SP_ArrowBack),
-                                "Откат", self)
+        self.act_undo = QAction(ico("assets/icons/undo.svg", QStyle.SP_ArrowBack), "Откат", self)
         self.act_undo.setShortcut(QKeySequence("Ctrl+Z"))
         self.act_undo.triggered.connect(self._undo)
 
-        self.act_redo = QAction(ico("assets/icons/redo.svg", QStyle.SP_ArrowForward),
-                                "Обратно", self)
+        self.act_redo = QAction(ico("assets/icons/redo.svg", QStyle.SP_ArrowForward), "Обратно", self)
         self.act_redo.setShortcut(QKeySequence("Ctrl+Y"))
         self.act_redo.triggered.connect(self._redo)
 
@@ -253,28 +260,66 @@ class MainWindow(QMainWindow):
         self._welcome.show()
 
 
-    def _import_json_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Импорт JSON", "", "JSON (*.json)")
-        if not path: return
+    def _open_project_dialog(self):
+        # показываем и .sh, и .json; по умолчанию выбран комбинированный фильтр
+        filters = "SmartHome Project (*.sh *.json);;SmartHome Project (*.sh);;JSON (*.json);;Все файлы (*)"
+        path, selected = QFileDialog.getOpenFileName(
+            self,
+            "Открыть проект",
+            "",                      # начальная папка
+            filters,
+            "SmartHome Project (*.sh *.json)"  # дефолтно выбранный фильтр
+        )
+        if not path:
+            return
+
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                data = json.load(f)  # внутри — обычный JSON
             self.scene.deserialize(data)
             self.undo_manager.push(json.dumps(self.scene.serialize()))
-            self._status("Импортировано.")
+            import os
+            self._status(f"Открыт проект: {os.path.basename(path)}")
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка импорта", str(e))
+            QMessageBox.critical(self, "Ошибка открытия", str(e))
+
+
 
     def _export_json_dialog(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Экспорт JSON", "smarthome_scene.json", "JSON (*.json)")
-        if not path: return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт JSON",
+            "smarthome_scene.json", "JSON (*.json)"
+        )
+        if not path: 
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.scene.serialize(), f, ensure_ascii=False, indent=2)
+            self._status("Экспортировано в JSON.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка экспорта", str(e))
+
+    def _save_project_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить проект",
+            "project.sh", "SmartHome Project (*.sh);;JSON (*.json)"
+        )
+        if not path:
+            return
+        # если выбрали "SmartHome Project", гарантируем .sh
+        selected_filter = _
+        if "SmartHome Project" in (selected_filter or ""):
+            path = _ensure_ext(path, ".sh")
         try:
             data = self.scene.serialize()
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            self._status("Сохранено.")
+                json.dump(data, f, ensure_ascii=False, indent=2)  # ПИШЕМ JSON, но файл .sh
+            self._status(f"Сохранено: {os.path.basename(path)}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка сохранения", str(e))
+
 
     def _undo(self):
         snap = self.undo_manager.undo()

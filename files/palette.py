@@ -115,23 +115,11 @@ class PreviewTile(QWidget):
         if (ev.pos() - self._press_pos).manhattanLength() < QApplication.startDragDistance():
             return
 
-        # старт drag
+        # старт drag — НИКАКОГО drag pixmap
         drag = QDrag(self)
         mime = QMimeData()
         mime.setData("application/x-smart", QByteArray(json.dumps(self.meta, ensure_ascii=False).encode("utf-8")))
         drag.setMimeData(mime)
-
-        # превью перетаскивания — мини-квадрат
-        pix = QPixmap(self._icon_rect.size())
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor("#FFE169"))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(QRect(0, 0, pix.width(), pix.height()), 6, 6)
-        p.end()
-        drag.setPixmap(pix)
-        drag.setHotSpot(QPoint(pix.width() // 2, pix.height() // 2))
         drag.exec(Qt.CopyAction)
 
         self._drag_from_icon = False
@@ -196,7 +184,7 @@ class PalettePanel(QWidget):
             return load_svg_icon(path, size)
 
         self.btn_rooms.setIcon(_cat("rooms", 28) or self.btn_rooms.icon())
-        self.btn_rooms.setToolTip("Комнаты")
+        self.btn_rooms.setToolTip("Дом")
         self.btn_devices.setIcon(_cat("devices", 28) or self.btn_devices.icon())
         self.btn_devices.setToolTip("Приборы")
         self.btn_furniture.setIcon(_cat("furniture", 28) or self.btn_furniture.icon())
