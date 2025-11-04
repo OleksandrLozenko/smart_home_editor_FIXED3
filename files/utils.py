@@ -31,10 +31,9 @@ PREVIEW_MAX_W = 320
 PREVIEW_MAX_H = 180
 DEVICE_PREVIEW_SIZE = 40
 
-# ===== SVG paths =====
-CATEGORY_ICON_ROOMS   = "icons/rooms.svg"
-CATEGORY_ICON_DEVICES = "icons/devices.svg"
-CATEGORY_ICON_FURNITURE = "icons/furniture.svg"
+CATEGORY_ICON_ROOMS = "assets/icons/rooms.svg"
+CATEGORY_ICON_DEVICES = "assets/icons/devices.svg"
+CATEGORY_ICON_FURNITURE = "assets/icons/furniture.svg"
 
 def snap(v: float, step: float) -> float:
     return round(v / step) * step

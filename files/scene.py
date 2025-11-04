@@ -53,6 +53,52 @@ class PlanScene(QGraphicsScene):
         self.selectionChanged.connect(self._on_selection_changed)
 
 
+    def import_from_data(self, data: Dict):
+        """Добавляет содержимое JSON в текущую сцену (merge, без очистки)."""
+        # 1) создаём комнаты и запоминаем индекс->объект
+        idx_to_room = {}
+        rooms = data.get("rooms", [])
+        for idx, r in enumerate(rooms):
+            w = float(r.get("w", 200)); h = float(r.get("h", 150))
+            item = RoomItem(ItemProps(r.get("name","Комната"), w, h, r.get("desc",""), "room"), QRectF(0,0,w,h))
+            self.addItem(item)
+            item.setPos(QPointF(float(r.get("x", 0)), float(r.get("y", 0))))
+            rot = float(r.get("rot", 0)); 
+            try: item.setRotation(rot)
+            except: pass
+            idx_to_room[idx] = item
+
+        # 2) устройства
+        for d in data.get("devices", []):
+            w = float(d.get("w", 40)); h = float(d.get("h", 40))
+            dev = DeviceItem(ItemProps(d.get("name","Устройство"), w, h, d.get("desc",""), "device"), QRectF(0,0,w,h))
+            room = idx_to_room.get(d.get("room_id"))
+            if room:
+                dev.setParentItem(room)
+                dev.setPos(QPointF(float(d.get("x", 0)), float(d.get("y", 0))))
+            else:
+                # на всякий случай — в сцену по абсолютным координатам
+                dev.setPos(QPointF(float(d.get("x", 0)), float(d.get("y", 0))))
+            try: dev.setRotation(float(d.get("rot", 0)))
+            except: pass
+            self.addItem(dev)
+
+        # 3) мебель
+        for f in data.get("furniture", []):
+            w = float(f.get("w", 60)); h = float(f.get("h", 40))
+            fur = FurnitureItem(ItemProps(f.get("name","Мебель"), w, h, f.get("desc",""), "furniture"), QRectF(0,0,w,h))
+            room = idx_to_room.get(f.get("room_id"))
+            if room:
+                fur.setParentItem(room)
+                fur.setPos(QPointF(float(f.get("x", 0)), float(f.get("y", 0))))
+            else:
+                fur.setPos(QPointF(float(f.get("x", 0)), float(f.get("y", 0))))
+            try: fur.setRotation(float(f.get("rot", 0)))
+            except: pass
+            self.addItem(fur)
+
+        self.apply_layer_state()
+
     def _on_selection_changed(self):
     # no-op: MainWindow сам слушает scene.selectionChanged и обновляет панель свойств
         pass

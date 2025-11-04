@@ -26,6 +26,24 @@ class LayersHUD(QWidget):
         self.btn_devices.setIcon(make_category_icon("devices", 28))
         self.btn_furn.setIcon(make_category_icon("furniture", 28))
         self.btn_furn.setIcon(QIcon())
+        from .utils import load_svg_icon, CATEGORY_ICON_ROOMS, CATEGORY_ICON_DEVICES, CATEGORY_ICON_FURNITURE
+        for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
+            b.setProperty("class", "layer")
+            b.setCheckable(True); b.setAutoExclusive(True)
+            b.setIconSize(QSize(18, 18))
+        self.btn_rooms.setIcon(load_svg_icon(CATEGORY_ICON_ROOMS, 18) or self.btn_rooms.icon())
+        self.btn_devices.setIcon(load_svg_icon(CATEGORY_ICON_DEVICES, 18) or self.btn_devices.icon())
+        self.btn_furn.setIcon(load_svg_icon(CATEGORY_ICON_FURNITURE, 18) or self.btn_furn.icon())
+
+        # стиль (если ещё нет)
+        self.setObjectName("LayersHUD")
+        self.setStyleSheet("""
+        QFrame#LayersHUD { background: rgba(255,255,255,.95); border:1px solid #e7e8ee; border-radius:14px; }
+        QToolButton.layer { border:none; padding:6px 10px; border-radius:12px; }
+        QToolButton.layer:hover { background:#f2f4f7; }
+        QToolButton.layer:checked { background:#dbe7ff; }
+        """)
+
 
         for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
             b.setCheckable(True); b.setAutoExclusive(True)

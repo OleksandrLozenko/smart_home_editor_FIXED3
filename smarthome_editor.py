@@ -114,17 +114,12 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(Qt.TopToolBarArea, tb)
 
-        style = self.style()
-        # аккуратный загрузчик svg с фолбэком на системную иконку
         from files.utils import load_svg_icon
-        def ico(path: str | None, fallback: QStyle.StandardPixmap):
-            if path:
-                icon = load_svg_icon(path, 18)
-                if icon: 
-                    return icon
-            return style.standardIcon(fallback)
+        style = self.style()
+        def ico(path, fallback):
+            return load_svg_icon(path, 18) or style.standardIcon(fallback)
 
-        # --- ДЕЙСТВИЯ ---
+        # ----- действия -----
         self.act_viewmode = QAction(ico("assets/icons/view.svg", QStyle.SP_DesktopIcon),
                                     "Просмотр", self, checkable=True)
         self.act_viewmode.toggled.connect(self._toggle_viewmode)
@@ -134,13 +129,17 @@ class MainWindow(QMainWindow):
         self.act_snap.setChecked(True)
         self.act_snap.toggled.connect(lambda on: setattr(self.scene, "snap_to_grid", on))
 
-        self.act_import = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
-                                "Импорт", self)
-        self.act_import.setShortcut(QKeySequence("Ctrl+O"))
-        self.act_import.triggered.connect(self._import_json_dialog)
+        self.act_open = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
+                                "Открыть проект…", self)
+        self.act_open.setShortcut(QKeySequence("Ctrl+O"))
+        self.act_open.triggered.connect(self._open_json_dialog)
+
+        self.act_import_into = QAction(ico("assets/icons/open.svg", QStyle.SP_DirOpenIcon),
+                                    "Импортировать в текущий…", self)
+        self.act_import_into.triggered.connect(self._import_into_current_dialog)
 
         self.act_export = QAction(ico("assets/icons/export.svg", QStyle.SP_ArrowRight),
-                                "Экспорт", self)
+                                "Экспорт…", self)
         self.act_export.setShortcut(QKeySequence("Ctrl+E"))
         self.act_export.triggered.connect(self._export_json_dialog)
 
@@ -161,49 +160,97 @@ class MainWindow(QMainWindow):
 
         self.act_settings = QAction(ico("assets/icons/settings.svg", QStyle.SP_FileDialogDetailedView),
                                     "Настройки", self)
-        self.act_settings.triggered.connect(lambda: None)  # заглушка
+        self.act_settings.triggered.connect(lambda: None)
 
-        # — Тогглеры доков. Иконки: если нет своих svg, берём системные.
-        self.act_toggle_props = QAction(
-            ico("assets/icons/props.svg", QStyle.SP_FileDialogInfoView),  # ← нет файла? возьмём стандартную
-            "Свойства", self, checkable=True
-        )
-        self.act_toggle_palette = QAction(
-            ico("assets/icons/palette.svg", QStyle.SP_DirIcon),           # ← нет файла? возьмём стандартную
-            "Палитра", self, checkable=True
-        )
-        def _sync_dock_actions():
+        # тумблеры доков
+        self.act_toggle_props = QAction(ico("assets/icons/props.svg", QStyle.SP_FileDialogInfoView),
+                                        "Свойства", self, checkable=True)
+        self.act_toggle_palette = QAction(ico("assets/icons/palette.svg", QStyle.SP_DirIcon),
+                                        "Палитра", self, checkable=True)
+        def _sync():
             self.act_toggle_props.setChecked(not self.props_dock.isHidden())
             self.act_toggle_palette.setChecked(not self.palette_dock.isHidden())
-        _sync_dock_actions()
+        _sync()
         self.act_toggle_props.toggled.connect(lambda on: (self.props_dock.show() if on else self.props_dock.hide()))
         self.act_toggle_palette.toggled.connect(lambda on: (self.palette_dock.show() if on else self.palette_dock.hide()))
-        self.props_dock.visibilityChanged.connect(lambda _: _sync_dock_actions())
-        self.palette_dock.visibilityChanged.connect(lambda _: _sync_dock_actions())
+        self.props_dock.visibilityChanged.connect(lambda _: _sync())
+        self.palette_dock.visibilityChanged.connect(lambda _: _sync())
 
-        # --- Разметка на тулбаре ---
-        from PySide6.QtWidgets import QLabel, QWidgetAction
-        def _lbl(text: str):
-            lab = QLabel(f"  {text}  "); lab.setStyleSheet("color:#667085; font-weight:600;")
-            wa = QWidgetAction(self); wa.setDefaultWidget(lab); tb.addAction(wa)
+        # ----- меню-кнопки -----
+        from PySide6.QtWidgets import QToolButton, QMenu, QWidgetAction, QLabel
 
-        _lbl("Проект")
-        tb.addAction(self.act_save)
-        tb.addAction(self.act_import)   # ← Импорт на месте
-        tb.addAction(self.act_export)
+        def add_menu_button(title: str, icon_path: str, fallback, menu_builder):
+            btn = QToolButton(self)
+            btn.setText(title)
+            btn.setIcon(ico(icon_path, fallback))
+            btn.setPopupMode(QToolButton.MenuButtonPopup)
+            btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            m = QMenu(btn); menu_builder(m)
+            btn.setMenu(m)
+            wa = QWidgetAction(self); wa.setDefaultWidget(btn)
+            tb.addAction(wa)
 
-        _lbl("Редактирование")
-        tb.addAction(self.act_snap)
-        tb.addAction(self.act_viewmode)
-        tb.addAction(self.act_undo)
-        tb.addAction(self.act_redo)
+        # Проект
+        def build_project_menu(m: QMenu):
+            m.addAction(self.act_open)
+            m.addAction(self.act_import_into)
+            m.addSeparator()
+            m.addAction(self.act_save)
+            m.addAction(self.act_export)
+        add_menu_button("Проект", "assets/icons/open.svg", QStyle.SP_DirOpenIcon, build_project_menu)
 
-        _lbl("Окна")
-        tb.addAction(self.act_toggle_props)
-        tb.addAction(self.act_toggle_palette)
+        # Редактирование
+        def build_edit_menu(m: QMenu):
+            m.addAction(self.act_snap)
+            m.addAction(self.act_viewmode)
+            m.addSeparator()
+            m.addAction(self.act_undo)
+            m.addAction(self.act_redo)
+        add_menu_button("Редактирование", "assets/icons/view.svg", QStyle.SP_DesktopIcon, build_edit_menu)
+
+        # Окна
+        def build_windows_menu(m: QMenu):
+            m.addAction(self.act_toggle_props)
+            m.addAction(self.act_toggle_palette)
+            m.addSeparator()
+            act_welcome = QAction("Стартовый экран", self)
+            act_welcome.triggered.connect(self._back_to_welcome)
+            m.addAction(act_welcome)
+        add_menu_button("Окна", "assets/icons/palette.svg", QStyle.SP_DirIcon, build_windows_menu)
 
         tb.addSeparator()
         tb.addAction(self.act_settings)
+
+    def _open_json_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "JSON (*.json)")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.scene.deserialize(data)
+            self.undo_manager.push(json.dumps(self.scene.serialize()))
+            self._status("Проект открыт.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка открытия", str(e))
+
+    def _import_into_current_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импортировать в текущий", "", "JSON (*.json)")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.scene.import_from_data(data)  # см. п.3
+            self.undo_manager.push(json.dumps(self.scene.serialize()))
+            self._status("Импорт завершён.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка импорта", str(e))
+
+    def _back_to_welcome(self):
+        # закрыть редактор и показать стартовое
+        from start_window import StartWindow
+        self.close()
+        self._welcome = StartWindow()   # удерживаем ссылку
+        self._welcome.show()
 
 
     def _import_json_dialog(self):
@@ -263,11 +310,16 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    with open("smart_theme.qss", "r", encoding="utf-8") as f:
-        app.setStyleSheet(f.read())
-    win = MainWindow()
+    try:
+        with open("smart_theme.qss", "r", encoding="utf-8") as f:
+            app.setStyleSheet(f.read())
+    except Exception:
+        pass
+    from start_window import StartWindow
+    win = StartWindow()
     win.show()
     return app.exec()
+
 
 if __name__ == "__main__":
     sys.exit(main())
