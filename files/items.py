@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QFont
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsItem
@@ -297,6 +297,34 @@ class RoomItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
         super().__init__(props, *args, **kwargs)
         self.props.kind = "room"
+    
+    # Внутрь RoomItem:
+    def _notify_openings(self):
+        sc = self.scene()
+        if not sc:
+            return
+        # Импорт не сверху, чтобы не ловить циклических импортов
+        from .items import OpeningItem
+        for it in sc.items():
+            if isinstance(it, OpeningItem) and it.anchor_room is self:
+                it._reposition_on_wall()
+
+    def itemChange(self, change, value):
+        # вызываем базовую логику
+        newv = super().itemChange(change, value)
+        from PySide6.QtWidgets import QGraphicsItem
+        # после факта изменения позиции — обновляем проёмы
+        if change in (QGraphicsItem.ItemPositionHasChanged, QGraphicsItem.ItemTransformHasChanged):
+            self._notify_openings()
+        return newv
+
+    # И если у тебя есть метод, меняющий размер (в RoomItem/PlanRectItem)
+    def set_size_px(self, w: float, h: float) -> bool:
+        ok = super().set_size_px(w, h)
+        if ok:
+            self._notify_openings()
+        return ok
+
 
 class DeviceItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
@@ -306,3 +334,173 @@ class FurnitureItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
         super().__init__(props, *args, **kwargs)
         self.props.kind = "furniture"
+class OpeningItem(PlanRectItem):
+    """
+    Проём (окно/дверь), якорится на стену комнаты и может двигаться
+    только вдоль своей стены. Не является дочерним элементом комнаты.
+    """
+    MAG_DIST = 24.0
+    EDGE_SWITCH_EPS = 8.0
+    def __init__(self, props: ItemProps, *args, subtype: str = "window", **kwargs):
+        super().__init__(props, *args, **kwargs)
+        self.props.kind = "opening"
+        # subtype: "window" | "door"
+        self.subtype = subtype
+        # якорь
+        self.anchor_room: Optional[RoomItem] = None
+        self.edge: Optional[str] = None         # 'T'|'R'|'B'|'L'
+        self.offset: float = 0.0                # вдоль стены
+        self.length: float = self.rect().width()
+        self.thickness: float = self.rect().height()
+        self.side: str = "outside" if subtype == "window" else "inside"
+
+        # визуал
+        if self.subtype == "window":
+            self.brush_normal = QBrush(QColor(80, 180, 255, 150))
+            self.pen_normal = QPen(QColor(30, 120, 200), 1)
+        else:
+            self.brush_normal = QBrush(QColor(230, 170, 60, 160))
+            self.pen_normal = QPen(QColor(180, 120, 30), 1)
+        self.setBrush(self.brush_normal)
+        self.setPen(self.pen_normal)
+        self._rounded = 2.0
+
+        # проём не масштабируем ручками через угловые хэндлы (пока)
+        self._remove_handles()
+
+        # движется сам, но всегда «зажат» стеной
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+
+    # --- API якоря ---
+    def set_anchor(self, room: RoomItem, edge: str, offset: float,
+                   length: float, thickness: float, side: str):
+        self.anchor_room = room
+        self.edge = edge
+        self.offset = float(offset)
+        self.length = float(length)
+        self.thickness = float(thickness)
+        self.side = side
+        # геометрию прямоугольника поворачиваем по ориентации стены:
+        if edge in ("T", "B"):
+            super().setRect(QRectF(0, 0, self.length, self.thickness))
+        else:
+            super().setRect(QRectF(0, 0, self.thickness, self.length))
+        self._reposition_on_wall()
+
+    def _reposition_on_wall(self):
+        if not (self.anchor_room and self.edge):
+            return
+        r = self.anchor_room.rect()
+        # локальные координаты «нижнего левого» угла прямоугольника
+        if self.edge == "T":
+            x = max(0.0, min(self.offset, r.width() - self.length))
+            y = -self.thickness if self.side == "outside" else 0.0
+            local = QPointF(x, y)
+        elif self.edge == "B":
+            x = max(0.0, min(self.offset, r.width() - self.length))
+            y = r.height() if self.side == "outside" else (r.height() - self.thickness)
+            local = QPointF(x, y)
+        elif self.edge == "L":
+            y = max(0.0, min(self.offset, r.height() - self.length))
+            x = -self.thickness if self.side == "outside" else 0.0
+            local = QPointF(x, y)
+        else:  # "R"
+            y = max(0.0, min(self.offset, r.height() - self.length))
+            x = r.width() if self.side == "outside" else (r.width() - self.thickness)
+            local = QPointF(x, y)
+        scene_pt = self.anchor_room.mapToScene(local)
+        self.setPos(scene_pt)
+
+    # запрещаем менять размер обычными путями
+    def set_size_px(self, width_px: float, height_px: float) -> bool:
+        # размеры задаём через set_anchor (length/thickness)
+        return False
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and self.anchor_room and self.edge:
+            new_scene_pos: QPointF = value if isinstance(value, QPointF) else QPointF(value)
+            room = self.anchor_room
+            rr = room.rect()
+            local = room.mapFromScene(new_scene_pos)
+
+            # текущие параметры
+            L = self.length
+            T = self.thickness
+            eps = self.EDGE_SWITCH_EPS
+
+            # Ветвь для горизонтальной стены (edge T/B):
+            if self.edge in ("T", "B"):
+                x = local.x()
+
+                # ЛЕВЫЙ перекат — как было:
+                if x < -eps:
+                    self._set_edge_and_rect("L")
+                    y_local = max(0.0, min(local.y(), rr.height() - L))
+                    x_local = -T if self.side == "outside" else 0.0
+                    self.offset = y_local
+                    return room.mapToScene(QPointF(x_local, snap(y_local, PX_GRID)))
+
+                # ПРАВЫЙ перекат — ИСПРАВЛЕНО:
+                right_trigger = rr.width() - L + eps   # ← учитываем длину проёма!
+                if x > right_trigger:
+                    self._set_edge_and_rect("R")
+                    y_local = max(0.0, min(local.y(), rr.height() - L))
+                    x_local = rr.width() if self.side == "outside" else (rr.width() - T)
+                    self.offset = y_local
+                    return room.mapToScene(QPointF(x_local, snap(y_local, PX_GRID)))
+
+                # Без переката — ходим вдоль X в пределах [0, W-L]
+                x = max(0.0, min(x, rr.width() - L))
+                x = snap(x, PX_GRID)
+                self.offset = x
+                y = (-T if self.side == "outside" else 0.0) if self.edge == "T" \
+                    else (rr.height() if self.side == "outside" else rr.height() - T)
+                return room.mapToScene(QPointF(x, y))
+
+            # Ветвь для вертикальной стены (edge L/R):
+            else:
+                y = local.y()
+
+                # ВЕРХНИЙ перекат — как было:
+                if y < -eps:
+                    self._set_edge_and_rect("T")
+                    x_local = max(0.0, min(local.x(), rr.width() - L))
+                    y_local = -T if self.side == "outside" else 0.0
+                    self.offset = x_local
+                    return room.mapToScene(QPointF(snap(x_local, PX_GRID), y_local))
+
+                # НИЖНИЙ перекат — ИСПРАВЛЕНО:
+                bottom_trigger = rr.height() - L + eps  # ← учитываем длину проёма!
+                if y > bottom_trigger:
+                    self._set_edge_and_rect("B")
+                    x_local = max(0.0, min(local.x(), rr.width() - L))
+                    y_local = rr.height() if self.side == "outside" else (rr.height() - T)
+                    self.offset = x_local
+                    return room.mapToScene(QPointF(snap(x_local, PX_GRID), y_local))
+
+                # Без переката — ходим вдоль Y в пределах [0, H-L]
+                y = max(0.0, min(y, rr.height() - L))
+                y = snap(y, PX_GRID)
+                self.offset = y
+                x = (-T if self.side == "outside" else 0.0) if self.edge == "L" \
+                    else (rr.width() if self.side == "outside" else rr.width() - T)
+                return room.mapToScene(QPointF(x, y))
+
+        return super().itemChange(change, value)
+
+    def _wall_len(self) -> float:
+        rr = self.anchor_room.rect()
+        return rr.width() if self.edge in ("T","B") else rr.height()
+
+    def _max_offset(self) -> float:
+        return max(0.0, self._wall_len() - self.length)
+
+    def _set_edge_and_rect(self, new_edge: str):
+        """Поменять сторону стены и форму прямоугольника (гориз/верт)."""
+        self.edge = new_edge
+        if new_edge in ("T","B"):
+            super().setRect(QRectF(0, 0, self.length, self.thickness))
+        else:
+            super().setRect(QRectF(0, 0, self.thickness, self.length))
+

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 import os
 from files import PlanScene, PlanView, UndoManager, Mode, PalettePanel, SCENE_W, SCENE_H, PropertyPanel, Layer
+from shiboken6 import isValid
 
 def _ensure_ext(path: str, ext: str) -> str:
     ext = ext.lower()
@@ -182,8 +183,10 @@ class MainWindow(QMainWindow):
         self.act_toggle_palette.toggled.connect(lambda on: (self.palette_dock.show() if on else self.palette_dock.hide()))
         self.props_dock.visibilityChanged.connect(lambda _: _sync())
         self.palette_dock.visibilityChanged.connect(lambda _: _sync())
+        self.scene.selectionChanged.connect(self._on_scene_selection_show_props)
+        self.scene.selectionChanged.connect(self._on_scene_selection)
 
-        # ----- меню-кнопки -----
+                # ----- меню-кнопки -----
         from PySide6.QtWidgets import QToolButton, QMenu, QWidgetAction, QLabel
 
         def add_menu_button(title: str, icon_path: str, fallback, menu_builder):
@@ -239,6 +242,13 @@ class MainWindow(QMainWindow):
             self._status("Проект открыт.")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка открытия", str(e))
+
+    def _on_scene_selection_show_props(self):
+            dock = getattr(self, "props_dock", None)
+            if dock is not None and isValid(dock):
+                if dock.isHidden():
+                    dock.show()
+                    dock.raise_()
 
     def _import_into_current_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Импортировать в текущий", "", "JSON (*.json)")

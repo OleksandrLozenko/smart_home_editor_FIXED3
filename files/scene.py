@@ -15,7 +15,7 @@ from .utils import (BG_COLOR, GRID_STEP, MAJOR_EVERY, GRID_MAJOR, GRID_MINOR,
                     SCENE_W, SCENE_H, EPS, DEV_BORDER)
 from .state import SceneState
 from .factory import ItemFactory
-from .items import RoomItem, DeviceItem, PlanRectItem, FurnitureItem
+from .items import RoomItem, DeviceItem, PlanRectItem, FurnitureItem, OpeningItem
 from .hud import LayersHUD
 
 # ---- SizeOverlay (как в монолитной версии) ----
@@ -102,6 +102,51 @@ class PlanScene(QGraphicsScene):
     def _on_selection_changed(self):
     # no-op: MainWindow сам слушает scene.selectionChanged и обновляет панель свойств
         pass
+    
+    def _magnet_for_opening(self, scene_pos: QPointF, subtype: str,
+                            length: float, thickness: float):
+        """
+        Возвращает (room, edge, offset, length, thickness, side) для ближайшей комнаты/стены.
+        Если на сцене нет ни одной комнаты — вернёт None.
+        """
+        side = "outside" if subtype == "window" else "inside"
+
+        # 1) ищем ближайшую комнату (по евклидову расстоянию до bbox)
+        best_room = None
+        best_dist = 1e18
+        for it in self.items():
+            if not isinstance(it, RoomItem):
+                continue
+            r = _scene_rect_of_item(it)
+            dx = max(r.left() - scene_pos.x(), 0, scene_pos.x() - r.right())
+            dy = max(r.top()  - scene_pos.y(), 0, scene_pos.y() - r.bottom())
+            dist = (dx*dx + dy*dy) ** 0.5
+            if dist < best_dist:
+                best_room, best_dist = it, dist
+
+        if not best_room:
+            return None
+
+        # 2) ближайшая сторона этой комнаты
+        local = best_room.mapFromScene(scene_pos)
+        rr = best_room.rect()
+        dL = abs(local.x() - 0.0)
+        dR = abs(local.x() - rr.width())
+        dT = abs(local.y() - 0.0)
+        dB = abs(local.y() - rr.height())
+        edge, _ = min((("L", dL), ("R", dR), ("T", dT), ("B", dB)), key=lambda x: x[1])
+
+        # 3) offset вдоль стены (центрируем по курсору) + clamp + snap
+        if edge in ("T", "B"):
+            offset = local.x() - length / 2.0
+            offset = max(0.0, min(offset, rr.width() - length))
+        else:
+            offset = local.y() - length / 2.0
+            offset = max(0.0, min(offset, rr.height() - length))
+        offset = snap(offset, PX_GRID)
+
+        return (best_room, edge, float(offset), float(length), float(thickness), side)
+
 
     def apply_layer_state(self):
         self.clearSelection()
@@ -144,6 +189,23 @@ class PlanScene(QGraphicsScene):
                     it.setFlag(QGraphicsItem.ItemIsMovable, True)
                     it.setFlag(QGraphicsItem.ItemIsSelectable, True)
                 elif isinstance(it, DeviceItem):
+                    it.set_view_mode("dim")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        elif self.active_layer == Layer.OPENINGS:
+            for it in self.items():
+                if isinstance(it, RoomItem):
+                    # Комнаты тусклые, разрешаем выделение (чтобы открыть свойства), НО не двигать
+                    it.set_view_mode("dim_strong_border")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                elif isinstance(it, OpeningItem):
+                    # Проёмы — активно и ярко, можно двигать вдоль стены
+                    it.set_view_mode("active_bright")
+                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                elif isinstance(it, (DeviceItem, FurnitureItem)):
+                    # Всё остальное — тускло и залочено
                     it.set_view_mode("dim")
                     it.setFlag(QGraphicsItem.ItemIsMovable, False)
                     it.setFlag(QGraphicsItem.ItemIsSelectable, False)

@@ -17,3 +17,4 @@ class Layer:
     ROOMS = "rooms"
     DEVICES = "devices"
     FURNITURE = "furniture"
+    OPENINGS = "openings"

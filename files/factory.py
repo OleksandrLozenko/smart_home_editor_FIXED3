@@ -3,7 +3,7 @@ from typing import Optional, Dict
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtWidgets import QMessageBox, QGraphicsItem
 from .models import ItemProps
-from .items import RoomItem, DeviceItem, FurnitureItem
+from .items import RoomItem, DeviceItem, FurnitureItem, OpeningItem
 from .utils import SCENE_W, SCENE_H, PX_GRID, snap, _scene_rect_of_item, _rects_overlap_strict
 
 class ItemFactory:
@@ -40,6 +40,8 @@ class ItemFactory:
             pos = QPointF(snap(pos.x(), PX_GRID), snap(pos.y(), PX_GRID))
         if kind == "room":
             return self._create_room(meta, pos, w, h)
+        elif kind == "opening":
+            return self._create_opening(meta, pos, w, h)
         elif kind == "furniture":
             return self._create_placeable(meta, pos, w, h, FurnitureItem)
         else:
@@ -79,3 +81,28 @@ class ItemFactory:
         item.setPos(QPointF(lx, ly))
         self.scene.addItem(item)
         return item
+    
+    def _create_opening(self, meta: Dict, pos: QPointF, w: float, h: float):
+        subtype = meta.get("subtype", "window")  # "window" | "door"
+        length = float(meta.get("length", w))
+        thickness = float(meta.get("thickness", max(8.0, min(20.0, h))))
+
+        snap = self.scene._magnet_for_opening(pos, subtype, length, thickness)
+        if not snap:
+            return None  # на сцене нет комнат — просто не создаём
+
+        room, edge, offset, length, thickness, side = snap
+
+        if edge in ("T", "B"):
+            rect = QRectF(0, 0, length, thickness)
+        else:
+            rect = QRectF(0, 0, thickness, length)
+
+        item = OpeningItem(ItemProps(meta.get("name", "Проём"),
+                                    rect.width(), rect.height(),
+                                    meta.get("desc", ""), "opening"),
+                        rect, subtype=subtype)
+        self.scene.addItem(item)
+        item.set_anchor(room, edge, offset, length, thickness, side)
+        return item
+

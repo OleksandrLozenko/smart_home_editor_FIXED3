@@ -233,12 +233,17 @@ class PalettePanel(QWidget):
             self._populate_furniture()
 
     def _populate_rooms(self):
-        rooms = [
+        blocks = [
+            # Комната
             {"name": "Комната 300x200", "w": 300, "h": 200, "kind": "room", "desc": "Прямоугольная"},
+            # Проёмы
+            {"name": "Окно", "w": 100, "h": 12, "kind": "opening", "subtype": "window", "desc": "Проём (окно)"},
+            {"name": "Дверь", "w": 90,  "h": 16, "kind": "opening", "subtype": "door",   "desc": "Проём (дверь)"},
         ]
-        for meta in rooms:
+        for meta in blocks:
             self.content_layout.addWidget(PreviewTile(meta))
         self.content_layout.addStretch(1)
+
 
     def _populate_devices(self):
         devices = [

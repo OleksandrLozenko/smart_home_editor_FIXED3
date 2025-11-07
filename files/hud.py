@@ -1,79 +1,76 @@
 from __future__ import annotations
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton
 from .models import Layer
 from .palette import make_category_icon
+from .utils import load_svg_icon, CATEGORY_ICON_ROOMS, CATEGORY_ICON_DEVICES, CATEGORY_ICON_FURNITURE
 
 class LayersHUD(QWidget):
     def __init__(self, view):
-        QWidget.__init__(self, view.viewport())
+        super().__init__(view.viewport())
         self.view = view
-        self.setObjectName("hud")
+        self.setObjectName("LayersHUD")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self.setStyleSheet("""
-            QWidget#hud { background: rgba(255,255,255,190); border:1px solid #e5e7eb; border-radius:6px; }
-            QToolButton { border:none; background:transparent; width:36px; height:36px; }
-            QToolButton:checked { background:#e3f2ff; border-radius:6px; }
-            QToolButton:hover { background:#f3f4f6; border-radius:6px; }
-        """)
-        lay = QHBoxLayout(self); lay.setContentsMargins(6,6,6,6); lay.setSpacing(4)
-        self.btn_rooms   = QToolButton(self)
-        self.btn_devices = QToolButton(self)
-        self.btn_furn    = QToolButton(self)
-        self.btn_rooms.setIcon(make_category_icon("rooms", 28))
-        self.btn_devices.setIcon(make_category_icon("devices", 28))
-        self.btn_furn.setIcon(make_category_icon("furniture", 28))
-        self.btn_furn.setIcon(QIcon())
-        from .utils import load_svg_icon, CATEGORY_ICON_ROOMS, CATEGORY_ICON_DEVICES, CATEGORY_ICON_FURNITURE
-        for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
-            b.setProperty("class", "layer")
-            b.setCheckable(True); b.setAutoExclusive(True)
-            b.setIconSize(QSize(18, 18))
-        self.btn_rooms.setIcon(load_svg_icon(CATEGORY_ICON_ROOMS, 18) or self.btn_rooms.icon())
-        self.btn_devices.setIcon(load_svg_icon(CATEGORY_ICON_DEVICES, 18) or self.btn_devices.icon())
-        self.btn_furn.setIcon(load_svg_icon(CATEGORY_ICON_FURNITURE, 18) or self.btn_furn.icon())
-
-        # стиль (если ещё нет)
-        self.setObjectName("LayersHUD")
-        self.setStyleSheet("""
-        QFrame#LayersHUD { background: rgba(255,255,255,.95); border:1px solid #e7e8ee; border-radius:14px; }
-        QToolButton.layer { border:none; padding:6px 10px; border-radius:12px; }
-        QToolButton.layer:hover { background:#f2f4f7; }
-        QToolButton.layer:checked { background:#dbe7ff; }
+            QWidget#LayersHUD { background: rgba(255,255,255,0.95); border:1px solid #e7e8ee; border-radius:12px; }
+            QToolButton.layer { border:none; padding:6px; border-radius:10px; }
+            QToolButton.layer:hover { background:#f2f4f7; }
+            QToolButton.layer:checked { background:#dbe7ff; }
         """)
 
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8,8,8,8)
+        lay.setSpacing(6)
 
-        for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
-            b.setCheckable(True); b.setAutoExclusive(True)
-            b.setIconSize(QSize(28, 28)); b.setFixedSize(36, 36); lay.addWidget(b)
+        # Кнопки слоёв
+        self.btn_rooms    = QToolButton(self)
+        self.btn_devices  = QToolButton(self)
+        self.btn_furn     = QToolButton(self)
+        self.btn_openings = QToolButton(self)
 
+        buttons = [
+            (self.btn_rooms,    Layer.ROOMS,    "Дом",      CATEGORY_ICON_ROOMS),
+            (self.btn_devices,  Layer.DEVICES,  "Приборы",  CATEGORY_ICON_DEVICES),
+            (self.btn_furn,     Layer.FURNITURE,"Мебель",   CATEGORY_ICON_FURNITURE),
+            # для «Проёмов» используем ту же иконку, что и «Дом» (позже можно заменить на дверь)
+            (self.btn_openings, Layer.OPENINGS, "Проёмы",   CATEGORY_ICON_ROOMS),
+        ]
+
+        for btn, layer, tooltip, svg_path in buttons:
+            btn.setProperty("class", "layer")
+            btn.setToolTip(tooltip)
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setIcon(make_category_icon("rooms" if svg_path==CATEGORY_ICON_ROOMS else
+                                           "devices" if svg_path==CATEGORY_ICON_DEVICES else
+                                           "furniture", 24))
+            # перекрываем на случай наличия SVG-иконок
+            svg = load_svg_icon(svg_path, 20)
+            if svg: btn.setIcon(svg)
+            btn.setIconSize(QSize(20,20))
+            btn.setFixedSize(36,36)
+            btn.clicked.connect(lambda _=False, L=layer: self._set_layer(L))
+            lay.addWidget(btn)
+
+        # Стартовое состояние
         self.btn_rooms.setChecked(True)
-        self.btn_rooms.clicked.connect(lambda: self._set_layer(Layer.ROOMS))
-        self.btn_devices.clicked.connect(lambda: self._set_layer(Layer.DEVICES))
-        self.btn_furn.clicked.connect(lambda: self._set_layer(Layer.FURNITURE))
-
-        self.setObjectName("LayersHUD")
-        for b in (self.btn_rooms, self.btn_devices, self.btn_furn):
-            b.setProperty("class", "layer")
-            b.setCheckable(True); b.setAutoExclusive(True)
-
         self.resize(self.sizeHint())
         self.setMinimumSize(self.sizeHint())
         self.show()
         self.raise_()
 
-    def set_checked(self, layer: str):
-        if layer == Layer.ROOMS:
-            self.btn_rooms.setChecked(True)
-        elif layer == Layer.DEVICES:
-            self.btn_devices.setChecked(True)
-        elif layer == Layer.FURNITURE:
-            self.btn_furn.setChecked(True)
+    def set_checked(self, layer: Layer):
+        self.btn_rooms.setChecked(layer == Layer.ROOMS)
+        self.btn_devices.setChecked(layer == Layer.DEVICES)
+        self.btn_furn.setChecked(layer == Layer.FURNITURE)
+        self.btn_openings.setChecked(layer == Layer.OPENINGS)
 
-    def _set_layer(self, layer: str):
-        from .scene import PlanScene  # избежать циклов
+    def _set_layer(self, layer: Layer):
+        # синхронизация кнопок
+        self.set_checked(layer)
+        # передаём в сцену
+        from .scene import PlanScene
         scene = self.view.scene()
         if isinstance(scene, PlanScene):
             scene.set_active_layer(layer)

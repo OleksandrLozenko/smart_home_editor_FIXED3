@@ -2,8 +2,7 @@ from __future__ import annotations
 from typing import Dict, List
 from PySide6.QtCore import QRectF, QPointF
 from .models import ItemProps
-from .items import RoomItem, DeviceItem, FurnitureItem
-
+from .items import RoomItem, DeviceItem, FurnitureItem, OpeningItem
 
 class SceneState:
     def __init__(self, scene_rect: QRectF):
@@ -13,6 +12,8 @@ class SceneState:
         rooms: List[Dict] = []
         devices: List[Dict] = []
         furniture: List[Dict] = []
+        openings: List[Dict] = []
+
         room_ids: Dict[RoomItem, int] = {}
         rid = 0
         for it in scene.items():
@@ -48,8 +49,24 @@ class SceneState:
                     "rot": it.rotation(),
                     "desc": it.props.description
                 })
-        return {"canvas": {"w": self.scene_rect.width(), "h": self.scene_rect.height(), "grid": 10.0},
-                "rooms": rooms, "devices": devices, "furniture": furniture}
+        for it in scene.items():
+            if isinstance(it, OpeningItem) and it.anchor_room and it.edge:
+                openings.append({
+                    "name": it.props.name,
+                    "subtype": it.subtype,          # "window" | "door"
+                    "room_id": room_ids.get(it.anchor_room, None),
+                    "edge": it.edge,                # 'T'|'R'|'B'|'L'
+                    "offset": it.offset,
+                    "length": it.length,
+                    "thickness": it.thickness,
+                    "side": it.side                 # 'inside'|'outside'
+                })
+
+        return {
+            "canvas": {"w": self.scene_rect.width(), "h": self.scene_rect.height(), "grid": 10.0},
+            "rooms": rooms, "devices": devices, "furniture": furniture,
+            "openings": openings
+        }
 
     def deserialize(self, scene, data: Dict):
         scene.clear_all_items()
@@ -75,5 +92,27 @@ class SceneState:
             if room: item.setParentItem(room)
             item.setPos(QPointF(f["x"], f["y"]))
             item.setRotation(float(f.get("rot", 0)))
+            scene.addItem(item)
+        for o in data.get("openings", []):
+            room = by_id.get(o.get("room_id"))
+            if not room:
+                continue
+            # длина/толщина управляют ориентацией rect
+            edge = o.get("edge", "T")
+            length = float(o.get("length", 80))
+            thickness = float(o.get("thickness", 12))
+            if edge in ("T", "B"):
+                rect = QRectF(0, 0, length, thickness)
+            else:
+                rect = QRectF(0, 0, thickness, length)
+
+            from .items import OpeningItem
+            item = OpeningItem(
+                ItemProps(o.get("name", "Проём"), rect.width(), rect.height(), "", "opening"),
+                rect,
+                subtype=o.get("subtype", "window")
+            )
+            item.set_anchor(room, edge, float(o.get("offset", 0.0)),
+                            length, thickness, o.get("side", "outside"))
             scene.addItem(item)
 
