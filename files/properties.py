@@ -5,7 +5,7 @@ from typing import Optional, List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox, QComboBox,
-    QListWidget, QListWidgetItem, QLabel, QHBoxLayout, QPushButton
+    QListWidget, QListWidgetItem, QLabel, QHBoxLayout, QPushButton,QGroupBox
 )
 
 from .items import RoomItem, DeviceItem, PlanRectItem, FurnitureItem
@@ -80,6 +80,30 @@ class PropertyPanel(QWidget):
 
         root.addWidget(self.frm_dev)
         root.addStretch(1)
+        self.grp_opening = QGroupBox("Проём")
+        fo = QFormLayout(self.grp_opening)
+
+        self.opening_kind = QLabel("-")            # окно/дверь (read-only)
+        self.sp_open_w = QDoubleSpinBox()          # ширина окна
+        self.sp_open_h = QDoubleSpinBox()          # высота окна
+        for s in (self.sp_open_w, self.sp_open_h):
+            s.setRange(1, 9999); s.setDecimals(0); s.setSingleStep(5); s.setSuffix(" px")
+
+        self.cmb_door_swing = QComboBox()
+        self.cmb_door_swing.addItems(["Вправо", "Влево"])
+
+        fo.addRow("Тип:", self.opening_kind)
+        fo.addRow("Ширина (окно):", self.sp_open_w)
+        fo.addRow("Высота (окно):", self.sp_open_h)
+        fo.addRow("Открытие (дверь):", self.cmb_door_swing)
+
+        root.addWidget(self.grp_opening)  # где root — основной layout панели
+        self.grp_opening.setVisible(False)
+
+        # сигналы
+        self.sp_open_w.valueChanged.connect(self._apply_opening_size)
+        self.sp_open_h.valueChanged.connect(self._apply_opening_size)
+        self.cmb_door_swing.currentIndexChanged.connect(self._apply_door_swing)
 
         self.clear()
 

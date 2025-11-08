@@ -8,35 +8,47 @@
     {
       "id": 0,
       "name": "Комната 300x200",
-      "x": 340.0,
-      "y": 440.0,
+      "x": 300.0,
+      "y": 150.0,
       "w": 300.0,
       "h": 200.0,
       "desc": "Прямоугольная"
     }
   ],
-  "devices": [],
-  "furniture": [],
+  "devices": [
+    {
+      "name": "Лампа",
+      "room_id": 0,
+      "x": 140.0,
+      "y": 70.0,
+      "w": 30.0,
+      "h": 30.0,
+      "rot": 0.0,
+      "desc": ""
+    }
+  ],
+  "furniture": [
+    {
+      "name": "Стул",
+      "room_id": 0,
+      "x": 200.0,
+      "y": 100.0,
+      "w": 40.0,
+      "h": 40.0,
+      "rot": 0.0,
+      "desc": ""
+    }
+  ],
   "openings": [
     {
       "name": "Дверь",
       "subtype": "door",
       "room_id": 0,
-      "edge": "B",
-      "offset": 140.0,
+      "edge": "L",
+      "offset": 80.0,
       "length": 90.0,
       "thickness": 16.0,
       "side": "inside"
-    },
-    {
-      "name": "Окно",
-      "subtype": "window",
-      "room_id": 0,
-      "edge": "T",
-      "offset": 70.0,
-      "length": 100.0,
-      "thickness": 12.0,
-      "side": "outside"
     }
   ]
 }

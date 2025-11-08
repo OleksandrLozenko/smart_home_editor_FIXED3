@@ -42,3 +42,9 @@ QFrame#LayersHUD { background:rgba(255,255,255,.95); border:1px solid #e7e8ee; b
 QToolButton.layer { border:none; padding:6px 10px; border-radius:12px; }
 QToolButton.layer:hover { background:#f2f4f7; }
 QToolButton.layer:checked { background:#dbe7ff; }
+#PaletteContent > QWidget[class="PreviewTile"] {
+  border-radius: 10px;
+}
+#PaletteContent > QWidget[class="PreviewTile"]:hover {
+  background: #F8FAFC;
+}

@@ -149,87 +149,89 @@ class PlanScene(QGraphicsScene):
 
 
     def apply_layer_state(self):
+        """Разрешаем двигать/выделять ТОЛЬКО объекты активного слоя. Остальные — залочены и не выделяются."""
         self.clearSelection()
-        if self._overlay_owner and not self._owner_in_active_layer(self._overlay_owner):
+
+        # helper: разрешены ли item в активном слое
+        def _is_allowed(it) -> bool:
+            if self.active_layer == Layer.ROOMS:
+                return isinstance(it, RoomItem)
+            if self.active_layer == Layer.DEVICES:
+                return isinstance(it, DeviceItem)
+            if self.active_layer == Layer.FURNITURE:
+                return isinstance(it, FurnitureItem)
+            if hasattr(Layer, "OPENINGS") and self.active_layer == Layer.OPENINGS:
+                from .items import OpeningItem
+                return isinstance(it, OpeningItem)
+            return False
+
+        for it in self.items():
+            if not isinstance(it, PlanRectItem):
+                continue
+
+            allowed = _is_allowed(it)
+
+            # Жёсткие флаги
+            it.setFlag(QGraphicsItem.ItemIsMovable,   bool(allowed))
+            it.setFlag(QGraphicsItem.ItemIsSelectable, bool(allowed))
+
+            # Визуальные режимы (чтобы было видно, что неактивные тусклые, но полностью залочены)
+            if hasattr(it, "set_view_mode"):
+                it.set_view_mode("active_bright" if allowed else "dim")
+
+        # если был размерный оверлей не на своём слое — скрыть
+        if self._overlay_owner and not _is_allowed(self._overlay_owner):
             self.hide_size_overlay(self._overlay_owner)
 
-        if self.active_layer == Layer.ROOMS:
-            for it in self.items():
-                if isinstance(it, RoomItem):
-                    it.set_view_mode("active")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                elif isinstance(it, (DeviceItem, FurnitureItem)):
-                    it.set_view_mode("dim")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        elif self.active_layer == Layer.DEVICES:
-            for it in self.items():
-                if isinstance(it, RoomItem):
-                    it.set_view_mode("dim_strong_border")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)   # ← разрешаем выделение
-                elif isinstance(it, DeviceItem):
-                    it.set_view_mode("active_bright")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                elif isinstance(it, FurnitureItem):
-                    it.set_view_mode("dim")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+    def set_active_layer(self, layer: str):
+        if layer == self.active_layer:
+            return
+        self.active_layer = layer
+        self.clearSelection()
+        self.apply_layer_state()
 
-        elif self.active_layer == Layer.FURNITURE:
-            for it in self.items():
-                if isinstance(it, RoomItem):
-                    it.set_view_mode("dim_strong_border")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)   # ← разрешаем выделение
-                elif isinstance(it, FurnitureItem):
-                    it.set_view_mode("active_bright")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                elif isinstance(it, DeviceItem):
-                    it.set_view_mode("dim")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        elif self.active_layer == Layer.OPENINGS:
-            for it in self.items():
-                if isinstance(it, RoomItem):
-                    # Комнаты тусклые, разрешаем выделение (чтобы открыть свойства), НО не двигать
-                    it.set_view_mode("dim_strong_border")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                elif isinstance(it, OpeningItem):
-                    # Проёмы — активно и ярко, можно двигать вдоль стены
-                    it.set_view_mode("active_bright")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, True)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, True)
-                elif isinstance(it, (DeviceItem, FurnitureItem)):
-                    # Всё остальное — тускло и залочено
-                    it.set_view_mode("dim")
-                    it.setFlag(QGraphicsItem.ItemIsMovable, False)
-                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        # синхронизация HUD
+        for v in self.views():
+            hud = getattr(v, "hud", None)
+            if hud: hud.set_checked(layer)
 
-
-        if self._overlay_owner and not self._owner_in_active_layer(self._overlay_owner):
-            self.hide_size_overlay(self._overlay_owner)
+        mw = QApplication.activeWindow()
+        if hasattr(mw, "_update_status"):
+            mw._update_status()
 
 
     def _make_preview(self, meta: Dict):
         self._clear_preview()
         kind = meta.get("kind", "device")
-        w = float(meta.get("w", 100)); h = float(meta.get("h", 50))
+
         if kind == "room":
+            w = float(meta.get("w", 100)); h = float(meta.get("h", 50))
             item = RoomItem(ItemProps(meta.get("name","Комната"), w, h, meta.get("desc",""), "room"), QRectF(0,0,w,h))
         elif kind == "furniture":
+            w = float(meta.get("w", 100)); h = float(meta.get("h", 50))
             item = FurnitureItem(ItemProps(meta.get("name","Мебель"), w, h, meta.get("desc",""), "furniture"), QRectF(0,0,w,h))
+        elif kind == "opening":
+            L = float(meta.get("length", 70)); T = float(meta.get("thickness", 12))
+            item = OpeningItem(meta.get("subtype","window"), length=L, thickness=T)
         else:
+            w = float(meta.get("w", 100)); h = float(meta.get("h", 50))
             item = DeviceItem(ItemProps(meta.get("name","Устройство"), w, h, meta.get("desc",""), "device"), QRectF(0,0,w,h))
+
         self.addItem(item)
-        item.setOpacity(0.5); item.setZValue(10_000)
+        item._is_preview = True
+        if hasattr(item, "set_view_mode"):
+            item.set_view_mode("ghost")
+        else:
+            item.setOpacity(0.5)
+
+        item.setZValue(10_000)
         item.setFlag(QGraphicsItem.ItemIsMovable, False)
         item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        self._drag_preview = item; self._drag_meta = meta
+
+        self._drag_preview = item
+        self._drag_meta = meta
+
+
 
 
     def _clear_preview(self):
@@ -239,59 +241,56 @@ class PlanScene(QGraphicsScene):
             self._drag_meta = None
 
     def _update_preview_pos(self, scene_pos: QPointF):
-        if not (self._drag_preview and self._drag_meta): return
+        if not (self._drag_preview and self._drag_meta): 
+            return
+
         kind = self._drag_meta.get("kind","device")
-        w = float(self._drag_meta.get("w",100)); h = float(self._drag_meta.get("h",50))
         pos = QPointF(scene_pos)
         if self.snap_to_grid:
             pos = QPointF(snap(pos.x(), PX_GRID), snap(pos.y(), PX_GRID))
 
         if kind == "room":
+            w = float(self._drag_meta.get("w",100)); h = float(self._drag_meta.get("h",50))
             x = min(max(pos.x(), self.sceneRect().left()),  self.sceneRect().right() - w)
             y = min(max(pos.y(), self.sceneRect().top()),   self.sceneRect().bottom() - h)
             self._drag_preview.setParentItem(None)
             self._drag_preview.setPos(QPointF(x, y))
-            self.nudge_room_to_touch(self._drag_preview)
-            bad = False
-            a = _scene_rect_of_item(self._drag_preview)
-            for it in self.items():
-                if isinstance(it, RoomItem) and it is not self._drag_preview:
-                    if _rects_overlap_strict(a, _scene_rect_of_item(it)):
-                        bad = True; break
-            pen = QPen(QColor(220, 30, 30), 2, Qt.DashLine if bad else Qt.SolidLine)
-            self._drag_preview.setPen(pen)
-        else:
-            room = self.room_at(scene_pos)
-            if not room:
-                self._drag_preview.setVisible(False); return
-            self._drag_preview.setVisible(True)
-            local = room.mapFromScene(pos)
-            lx = min(max(local.x(), 0), room.rect().width()  - w)
-            ly = min(max(local.y(), 0), room.rect().height() - h)
-            self._drag_preview.setParentItem(room)
-            self._drag_preview.setPos(QPointF(lx, ly))
-            self._drag_preview.setPen(QPen(DEV_BORDER, 1, Qt.DashLine))
-
-    def set_active_layer(self, layer: str):
-        if layer == self.active_layer: 
+            # (опционально) ваш nudge + подсветка пересечений — как было
             return
-        self.active_layer = layer
-        self.apply_layer_state()
-        # синхронизируем HUD (если он есть у view)
-        for v in self.views():
-            hud = getattr(v, "hud", None)
-            if hud:
-                hud.set_checked(layer)
-        from PySide6.QtWidgets import QApplication
-        mw = QApplication.activeWindow()
-        if hasattr(mw, "_update_status"):
-            mw._update_status()
 
+        # device/furniture/opening — внутрь ближайшей комнаты (как потом при drop)
+        room = self.room_at(scene_pos)
+        if not room:
+            self._drag_preview.setVisible(False)
+            return
+
+        self._drag_preview.setVisible(True)
+        self._drag_preview.setParentItem(room)
+
+        # размер для позиционирования
+        if kind == "opening":
+            w = float(self._drag_meta.get("length", 70))
+            h = float(self._drag_meta.get("thickness", 12))
+        else:
+            w = float(self._drag_meta.get("w", 40))
+            h = float(self._drag_meta.get("h", 40))
+
+        local = room.mapFromScene(pos)
+        lx = min(max(local.x(), 0), room.rect().width()  - w)
+        ly = min(max(local.y(), 0), room.rect().height() - h)
+        if self.snap_to_grid:
+            lx = snap(lx, PX_GRID); ly = snap(ly, PX_GRID)
+
+        self._drag_preview.setPos(QPointF(lx, ly))
 
     def _owner_in_active_layer(self, owner: "PlanRectItem") -> bool:
-        return ((self.active_layer == Layer.ROOMS      and isinstance(owner, RoomItem)) or
-                (self.active_layer == Layer.DEVICES    and isinstance(owner, DeviceItem)) or
-                (self.active_layer == Layer.FURNITURE  and isinstance(owner, FurnitureItem)))
+        return (
+            (self.active_layer == Layer.ROOMS     and isinstance(owner, RoomItem)) or
+            (self.active_layer == Layer.DEVICES   and isinstance(owner, DeviceItem)) or
+            (self.active_layer == Layer.FURNITURE and isinstance(owner, FurnitureItem)) or
+            (self.active_layer == Layer.OPENINGS  and isinstance(owner, OpeningItem))
+        )
+
 
     def nudge_room_to_touch(self, room: "RoomItem"):
         for _ in range(12):
@@ -363,14 +362,21 @@ class PlanScene(QGraphicsScene):
             meta = json.loads(bytes(data).decode("utf-8"))
         except Exception:
             meta = {"name": "Объект", "w": 100, "h": 50, "kind": "device"}
+
         created = self.factory.create_from_meta(meta, event.scenePos())
+        self._clear_preview()                   # ← убрать «призрак» в любом случае
         if created is None:
-            self._clear_preview(); event.ignore(); return
-        self._clear_preview()
+            event.ignore(); return
+
+        if hasattr(created, "set_view_mode"):
+            created.set_view_mode("active")
+        created.setOpacity(1.0)
+
         self._push_snapshot("drop")
         self.clearSelection()
         self.apply_layer_state()
         event.acceptProposedAction()
+
 
     def room_at(self, scene_pos: QPointF) -> Optional[RoomItem]:
         for it in self.items(scene_pos):
@@ -434,10 +440,18 @@ class PlanScene(QGraphicsScene):
         if hasattr(mw, "undo_manager"):
             mw.undo_manager.push(json.dumps(self.serialize()))
 
+    # files/scene.py
     def set_editable(self, editable: bool):
-        for it in self.items():
-            if isinstance(it, PlanRectItem):
-                it.setFlag(QGraphicsItem.ItemIsMovable, editable)
+        """VIEW = всё залочить; EDIT = управление полностью через apply_layer_state()."""
+        if not editable:
+            for it in self.items():
+                if isinstance(it, PlanRectItem):
+                    it.setFlag(QGraphicsItem.ItemIsMovable,   False)
+                    it.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        else:
+            self.apply_layer_state()
+
+
 
 class PlanView(QGraphicsView):
     # правильное объявление сигнала — на уровне класса

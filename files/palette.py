@@ -43,6 +43,12 @@ class PreviewTile(QWidget):
         self._icon_rect: QRect = QRect()
         self.setObjectName("PreviewTile")
         self.setProperty("class", "PreviewTile")  # для QSS селектора .PreviewTile
+        self._svg_icon = None
+        icon_path = self.meta.get("icon")
+        if icon_path:
+            from .utils import load_svg_icon
+            self._svg_icon = load_svg_icon(icon_path, 48)
+
 
     def sizeHint(self) -> QSize:
         iw, ih = self._scaled_size()
@@ -79,27 +85,37 @@ class PreviewTile(QWidget):
         return r
 
     def paintEvent(self, ev):
-        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
         r = self._layout_icon_rect()
         kind = self.meta.get("kind", "")
 
         if kind == "room":
-            # прежний вид комнаты в палитре
+            # синяя «комнатная» плитка
+            from .utils import ROOM_COLOR
             p.setBrush(ROOM_COLOR)
             p.setPen(QPen(QColor(70, 70, 70), 1))
             p.drawRoundedRect(r, 6, 6)
         else:
-            # приборы/мебель — жёлтый квадрат
-            p.setBrush(QColor("#FFE169"))
-            p.setPen(Qt.NoPen)
-            p.drawRoundedRect(r, 6, 6)
+            # нейтральная карточка
+            p.setBrush(QColor("#FFFFFF"))
+            p.setPen(QPen(QColor("#E5E7EB"), 1))
+            p.drawRoundedRect(r, 8, 8)
 
+        # центрируем SVG-иконку (если есть)
+        if self._svg_icon:
+            pm = self._svg_icon.pixmap(min(r.width(), 44), min(r.height(), 44))
+            px = r.x() + (r.width()  - pm.width())  // 2
+            py = r.y() + (r.height() - pm.height()) // 2
+            p.drawPixmap(int(px), int(py), pm)
+
+        # подпись
         name = self.meta.get("name", "")
         if name:
             p.setPen(QPen(QColor("#222"), 1))
             fm = p.fontMetrics()
             text_w = fm.horizontalAdvance(name)
             p.drawText(max(8, (self.width()-text_w)//2), r.bottom()+18, name)
+
 
 
     def enterEvent(self, ev):
@@ -247,12 +263,17 @@ class PalettePanel(QWidget):
 
     def _populate_devices(self):
         devices = [
-            {"name":"Лампа","w":40,"h":40,"kind":"device","desc":""},
-            {"name":"Розетка","w":30,"h":30,"kind":"device","desc":""},
-            {"name":"Датчик","w":30,"h":30,"kind":"device","desc":"Датчик движения/дыма"},
-            {"name":"Камера","w":46,"h":32,"kind":"device","desc":""},
-            {"name":"Кондиционер","w":90,"h":30,"kind":"device","desc":""},
+        {"name":"Лампа","w":30,"h":30,"kind":"device","icon":"assets/icons/device_lamp.svg"},
+        {"name":"Розетка","w":20,"h":20,"kind":"device","icon":"assets/icons/device_socket.svg"},
+        {"name":"Датчик движения","w":30,"h":30,"kind":"device","icon":"assets/icons/device_motion.svg"},
+        {"name":"Камера","w":46,"h":32,"kind":"device","icon":"assets/icons/device_camera.svg"},
+        {"name":"Кондиционер","w":90,"h":30,"kind":"device","icon":"assets/icons/device_ac.svg"},
+        {"name":"Термостат","w":32,"h":48,"kind":"device","icon":"assets/icons/device_thermostat.svg"},
+        {"name":"Колонка","w":40,"h":80,"kind":"device","icon":"assets/icons/device_speaker.svg"},
+        {"name":"Роутер","w":80,"h":30,"kind":"device","icon":"assets/icons/device_router.svg"},
+        {"name":"Хаб","w":40,"h":40,"kind":"device","icon":"assets/icons/device_hub.svg"},
         ]
+
         grid_host = QWidget(); grid = QGridLayout(grid_host)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(8); grid.setVerticalSpacing(8)
@@ -263,11 +284,19 @@ class PalettePanel(QWidget):
 
     def _populate_furniture(self):
             furniture = [
-                {"name":"Стол","w":80,"h":60,"kind":"furniture","desc":""},
-                {"name":"Стул","w":30,"h":30,"kind":"furniture","desc":""},
-                {"name":"Диван","w":120,"h":60,"kind":"furniture","desc":""},
-                {"name":"Шкаф","w":90,"h":40,"kind":"furniture","desc":""},
+            {"name":"Кровать","w":200,"h":160,"kind":"furniture","icon":"assets/icons/furn_bed.svg"},
+            {"name":"Диван","w":180,"h":80,"kind":"furniture","icon":"assets/icons/furn_sofa.svg"},
+            {"name":"Стол","w":140,"h":80,"kind":"furniture","icon":"assets/icons/furn_table.svg"},
+            {"name":"Стул","w":40,"h":40,"kind":"furniture","icon":"assets/icons/furn_chair.svg"},
+            {"name":"Холодильник","w":70,"h":70,"kind":"furniture","icon":"assets/icons/furn_fridge.svg"},
+            {"name":"Плита","w":60,"h":60,"kind":"furniture","icon":"assets/icons/furn_stove.svg"},
+            {"name":"Торшер","w":30,"h":30,"kind":"furniture","icon":"assets/icons/furn_floorlamp.svg"},
+            {"name":"Телевизор","w":120,"h":20,"kind":"furniture","icon":"assets/icons/furn_tv.svg"},
+            {"name":"Тумба","w":80,"h":45,"kind":"furniture","icon":"assets/icons/furn_nightstand.svg"},
+            {"name":"Шкаф","w":160,"h":60,"kind":"furniture","icon":"assets/icons/furn_wardrobe.svg"},
+            {"name":"Унитаз","w":38,"h":70,"kind":"furniture","icon":"assets/icons/furn_toilet.svg"},
             ]
+
             grid_host = QWidget(); grid = QGridLayout(grid_host)
             grid.setContentsMargins(0, 0, 0, 0)
             grid.setHorizontalSpacing(8); grid.setVerticalSpacing(8)

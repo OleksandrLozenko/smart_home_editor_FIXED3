@@ -8,6 +8,8 @@ from .utils import (ROOM_COLOR, ROOM_BORDER, DEV_COLOR, DEV_BORDER, EPS, PX_GRID
                     snap, _scene_rect_of_item, _rects_overlap_strict)
 # Важно: PlanScene используется только через методы scene(), импорт внутри методов не нужен
 
+GHOST_PEN   = QPen(QColor("#94A3B8"), 1, Qt.DashLine)
+GHOST_BRUSH = QBrush(QColor(148, 163, 184, 80))
 class ResizeHandle(QGraphicsRectItem):
     SIZE = 10.0
     def __init__(self, owner: "PlanRectItem", cx: float, cy: float, corner: str):
@@ -73,7 +75,8 @@ class PlanRectItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self._handles: List[ResizeHandle] = []
         self._rounded = 6.0
-        self._view_mode = "active"
+        self._is_preview = False     # признак «призрака»
+        self._view_mode  = "active"  # active | dim | dim_strong_border | ghost
 
         if self.props.kind == "room":
             self.brush_normal = QBrush(ROOM_COLOR)
@@ -91,14 +94,42 @@ class PlanRectItem(QGraphicsRectItem):
 
     def set_view_mode(self, mode: str):
         self._view_mode = mode
-        # визуально «ярче/тусклее», без кликов:
-        if mode in ("active", "active_bright"):
+
+        # «призрак» действует только на превью (drag-preview)
+        if mode == "ghost" and getattr(self, "_is_preview", False):
+            try:
+                self.setOpacity(0.5)
+                self.setPen(GHOST_PEN)
+                self.setBrush(GHOST_BRUSH)
+            except Exception:
+                pass
+            self.update()
+            return
+
+        # обычные режимы — реальный элемент всегда видим
+        try:
             self.setOpacity(1.0)
+            pen = self.pen()
+            pen.setStyle(Qt.SolidLine)
+            self.setPen(pen)
+        except Exception:
+            pass
+
+        # лёгкое «тускление» по слоям (не через полную прозрачность!)
+        if mode == "dim":
+            try:
+                self.setOpacity(0.55)
+            except Exception:
+                pass
         elif mode == "dim_strong_border":
-            self.setOpacity(0.85)
-        else:  # "dim" и любые прочие
-            self.setOpacity(0.45)
-        self.update()
+            try:
+                self.setOpacity(0.65)
+                pen = self.pen()
+                pen.setColor(QColor("#64748B"))
+                self.setPen(pen)
+            except Exception:
+                pass
+
 
 
     def mousePressEvent(self, e):
@@ -297,6 +328,10 @@ class RoomItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
         super().__init__(props, *args, **kwargs)
         self.props.kind = "room"
+        self.setPen(QPen(QColor("#2563EB"), 2))
+        self.setBrush(QBrush(QColor(37, 99, 235, 70)))
+        self.setOpacity(1.0)
+
     
     # Внутрь RoomItem:
     def _notify_openings(self):
@@ -330,10 +365,18 @@ class DeviceItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
         super().__init__(props, *args, **kwargs)
         self.props.kind = "device"
+        self.setPen(QPen(QColor("#334155"), 1))
+        self.setBrush(QBrush(QColor(226, 232, 240)))
+        self.setOpacity(1.0)
+
 class FurnitureItem(PlanRectItem):
     def __init__(self, props: ItemProps, *args, **kwargs):
         super().__init__(props, *args, **kwargs)
         self.props.kind = "furniture"
+        self.setPen(QPen(QColor("#334155"), 1))
+        self.setBrush(QBrush(QColor(226, 232, 240)))
+        self.setOpacity(1.0)
+
 class OpeningItem(PlanRectItem):
     """
     Проём (окно/дверь), якорится на стену комнаты и может двигаться
@@ -353,6 +396,11 @@ class OpeningItem(PlanRectItem):
         self.length: float = self.rect().width()
         self.thickness: float = self.rect().height()
         self.side: str = "outside" if subtype == "window" else "inside"
+        # в __init__ OpeningItem:
+        self.setPen(QPen(QColor("#0EA5E9" if self.subtype=="window" else "#2563EB"), 2))
+        self.setBrush(QBrush(QColor(14,165,233,40) if self.subtype=="window" else QColor(37,99,235,40)))
+        self.setOpacity(1.0)
+
 
         # визуал
         if self.subtype == "window":
@@ -503,4 +551,23 @@ class OpeningItem(PlanRectItem):
             super().setRect(QRectF(0, 0, self.length, self.thickness))
         else:
             super().setRect(QRectF(0, 0, self.thickness, self.length))
+
+    def paint(self, painter, option, widget=None):
+        r = self.rect()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # общий бордер/фон
+        if self.subtype == "door":
+            # дверь — «квадратная»: заметнее, толще обводка
+            pen = QPen(QColor("#2563EB"), 2)
+            brush = QBrush(QColor(37, 99, 235, 30))  # лёгкая синяя заливка
+        else:
+            # окно — тонкий «брусок», полупрозрачный
+            pen = QPen(QColor("#0EA5E9"), 1.5)
+            brush = QBrush(QColor(14, 165, 233, 30))
+
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        painter.drawRoundedRect(r, 2, 2)
+
 
